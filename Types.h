@@ -155,5 +155,3 @@ enum PiecePhase {
     RookPhase = 2,
     QueenPhase = 4
 };
-
-

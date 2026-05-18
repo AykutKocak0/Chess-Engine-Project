@@ -437,7 +437,3 @@ char Search::getPromotionChar(Move move) {
         default: return '\0';
     }
 }
-
-
-
-

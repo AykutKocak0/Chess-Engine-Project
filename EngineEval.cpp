@@ -80,7 +80,7 @@ int EngineEval::evaluate(const Board& board){
 
     // Mop up
     if(phase >150){
-        Color winner = (materialDiff > 0) ? WHITE : BLACK;
+        Color winner = (materialDiff > 200) ? WHITE : BLACK;
         int mopUp=mopUpEval(board, winner, phase, bishopKnightEndgame);
         score += (mopUp * (phase - 150)) / (256 - 150);
     }
