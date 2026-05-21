@@ -2,8 +2,8 @@ extends Node2D
 
 const COLOR_LIGHT = Color("#ebecd0")
 const COLOR_DARK = Color("#779556")
-const SQUARE_SIZE = 90
-const BOARD_OFFSET = Vector2(40, 40)
+const SQUARE_SIZE = 75
+const BOARD_OFFSET = Vector2(60, 100)
 
 @onready var grid_container = $GridContainer
 @onready var eval_label = $EvalLabel
@@ -36,6 +36,8 @@ var promotion_to_pos: Vector2 = Vector2.ZERO
 var promotion_popup: HBoxContainer = null
 var is_board_flipped: bool = false 
 var depth_spinbox: SpinBox = null
+var active_promotion_piece: String = "q"
+var is_debug_sandbox_mode: bool = false
 
 func _ready():
 	DisplayServer.window_set_size(Vector2i(1280, 800))
@@ -59,8 +61,23 @@ func _ready():
 	depth_spinbox.step = 1
 	depth_spinbox.custom_minimum_size = Vector2(100, 35)
 	level_container.add_child(depth_spinbox)
-	
 	menu_container.add_child(level_container)
+	
+	var mode_button = Button.new()
+	mode_button.text = "Mod: İnsan vs Bot" if not is_debug_sandbox_mode else "Mod: İnsan vs İnsan"
+	mode_button.custom_minimum_size = Vector2(200, 45)
+	mode_button.pressed.connect(func():
+		is_debug_sandbox_mode = !is_debug_sandbox_mode
+		mode_button.text = "Mod: İnsan vs Bot" if not is_debug_sandbox_mode else "Mod: İnsan vs İnsan"
+		print("[Sistem]: Oyun modu değiştirildi! Sandbox: ", is_debug_sandbox_mode)
+		if not is_debug_sandbox_mode:
+			var is_white_turn = (move_history.size() % 2 == 0)
+			var bot_color = "b" if not is_board_flipped else "w"
+			var is_bot_turn = (is_white_turn and bot_color == "w") or (not is_white_turn and bot_color == "b")
+			if is_bot_turn:
+				trigger_engine_search()
+	)
+	menu_container.add_child(mode_button)
 	
 	var flip_button = Button.new()
 	flip_button.text = "Tahtayı Çevir (Flip)"
@@ -73,6 +90,41 @@ func _ready():
 	restart_button.custom_minimum_size = Vector2(200, 45)
 	restart_button.pressed.connect(self.restart_game)
 	menu_container.add_child(restart_button)
+
+	var promo_label = Label.new()
+	promo_label.text = "Piyon Terfi Tercihi:"
+	menu_container.add_child(promo_label)
+	
+	var promo_hbox = HBoxContainer.new()
+	promo_hbox.add_theme_constant_override("separation", 10)
+	menu_container.add_child(promo_hbox)
+	
+	var human_color = "b" if is_board_flipped else "w"
+	var promo_options = {"q": human_color + "Q", "r": human_color + "R", "b": human_color + "B", "n": human_color + "N"}
+	
+	for key in promo_options:
+		var btn = TextureButton.new()
+		var path = "res://" + promo_options[key] + ".svg"
+		if ResourceLoader.exists(path):
+			btn.texture_normal = load(path)
+			btn.custom_minimum_size = Vector2(45, 45)
+			btn.ignore_texture_size = true
+			btn.stretch_mode = TextureButton.STRETCH_SCALE
+			btn.mouse_filter = Control.MOUSE_FILTER_STOP
+			
+			if key == active_promotion_piece:
+				btn.modulate = Color(1, 1, 1, 1)
+			else:
+				btn.modulate = Color(1, 1, 1, 0.4)
+				
+			btn.pressed.connect(func():
+				active_promotion_piece = key
+				for b in promo_hbox.get_children():
+					b.modulate = Color(1, 1, 1, 0.4)
+				btn.modulate = Color(1, 1, 1, 1)
+				print("[Sistem]: Terfi tercihi değiştirildi: ", key.to_upper())
+			)
+			promo_hbox.add_child(btn)
 
 	if eval_label:
 		eval_label.position = Vector2(850, 50) 
@@ -174,10 +226,8 @@ func process_engine_line(line: String):
 		
 		if result == "legal" and is_waiting_for_legal_check and is_instance_valid(dragging_piece):
 			var my_piece_name = dragging_piece.get_meta("piece_name") if dragging_piece.has_meta("piece_name") else ""
-			
 			var from_pos = basic_notation_to_pos(pending_move.substr(0, 2))
 			var to_pos = basic_notation_to_pos(pending_move.substr(2, 2))
-			
 			var target_square = grid_container.get_child(to_pos.y * 8 + to_pos.x)
 			
 			if my_piece_name.ends_with("P") and from_pos.x != to_pos.x:
@@ -187,11 +237,18 @@ func process_engine_line(line: String):
 						has_target_piece = true
 						break
 				if not has_target_piece:
-					var victim_row = to_pos.y + 1 if my_piece_name.begins_with("b") else to_pos.y - 1
-					var victim_square = grid_container.get_child(victim_row * 8 + to_pos.x)
-					for child in victim_square.get_children():
-						if child is Sprite2D:
-							child.queue_free()
+					var victim_row: int
+					if my_piece_name.begins_with("w"):
+						victim_row = to_pos.y + 1 
+					else:
+						victim_row = to_pos.y - 1 
+					
+					if victim_row >= 0 and victim_row < 8:
+						var victim_square = grid_container.get_child(victim_row * 8 + to_pos.x)
+						for child in victim_square.get_children():
+							if child is Sprite2D:
+								child.queue_free()
+								print("[Sistem]: İnsan oyuncunun En Passant hamlesiyle rakip piyon silindi.")
 			
 			for child in target_square.get_children():
 				if child is Sprite2D:
@@ -209,8 +266,8 @@ func process_engine_line(line: String):
 			
 			if pending_move.length() == 5: 
 				var promote_code = pending_move.substr(4, 1)
-				var human_color = "b" if is_board_flipped else "w"
-				var new_piece_name = human_color + promote_code.to_upper()
+				var actual_pawn_color = my_piece_name.substr(0, 1)
+				var new_piece_name = actual_pawn_color + promote_code.to_upper()
 				dragging_piece.queue_free()
 				var new_sprite = Sprite2D.new()
 				new_sprite.texture = load("res://" + new_piece_name + ".svg")
@@ -242,7 +299,10 @@ func process_engine_line(line: String):
 	elif line.begins_with("bestmove"):
 		var parts = line.split(" ")
 		if parts.size() > 1 and parts[1] != "(none)":
-			make_engine_move(parts[1])
+			if is_debug_sandbox_mode:
+				print("[Sandbox - Analiz]: Motorun bu konum için önerdiği hamle: ", parts[1])
+			else:
+				make_engine_move(parts[1])
 
 func pos_to_notation(pos: Vector2) -> String:
 	var files = ["a", "b", "c", "d", "e", "f", "g", "h"]
@@ -263,7 +323,6 @@ func _input(event):
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			var local_pos = grid_container.get_local_mouse_position()
-			
 			var col = floor(local_pos.x / SQUARE_SIZE)
 			var row = floor(local_pos.y / SQUARE_SIZE)
 			
@@ -275,13 +334,20 @@ func _input(event):
 					if child is Sprite2D:
 						var piece_name = child.get_meta("piece_name") if child.has_meta("piece_name") else ""
 						var is_white_turn = (move_history.size() % 2 == 0)
-						var human_color = "b" if is_board_flipped else "w"
-						var is_my_turn = (is_white_turn and human_color == "w") or (not is_white_turn and human_color == "b")
-				
-						if not is_my_turn or not piece_name.begins_with(human_color):
-							print("[Sistem]: Şu an sizin sıranız değil veya rakip taşı seçtiniz!")
-							return
-							
+						
+						if is_debug_sandbox_mode:
+							var expected_color = "w" if is_white_turn else "b"
+							if not piece_name.begins_with(expected_color):
+								print("[Sandbox]: Şu an hamle sırası ", "Beyazda!" if is_white_turn else "Siyahta!")
+								return
+						else:
+							var human_color = "b" if is_board_flipped else "w"
+							var is_my_turn = (is_white_turn and human_color == "w") or (not is_white_turn and human_color == "b")
+					
+							if not is_my_turn or not piece_name.begins_with(human_color):
+								print("[Sistem]: Şu an sizin sıranız değil veya rakip taşı seçtiniz!")
+								return
+
 						dragging_piece = child
 						original_square_pos = Vector2(col, row)
 						original_global_pos = dragging_piece.global_position
@@ -291,33 +357,26 @@ func _input(event):
 		elif not event.pressed and is_instance_valid(dragging_piece):
 			dragging_piece.z_index = 0
 			
-			if is_promoting:
-				dragging_piece.global_position = original_global_pos
-				dragging_piece = null
-				return
-				
 			var local_pos = grid_container.get_local_mouse_position()
-			
 			var new_col = floor(local_pos.x / SQUARE_SIZE)
 			var new_row = floor(local_pos.y / SQUARE_SIZE)
 			
 			if new_col >= 0 and new_col < 8 and new_row >= 0 and new_row < 8 and (new_col != original_square_pos.x or new_row != original_square_pos.y):
 				var piece_name = dragging_piece.get_meta("piece_name") if dragging_piece.has_meta("piece_name") else ""
+				var uci_move = pos_to_notation(original_square_pos) + pos_to_notation(Vector2(new_col, new_row))
 				
-				if piece_name.ends_with("P") and new_row == 0:
+				if piece_name.ends_with("P") and (new_row == 0 or new_row == 7):
 					promotion_from_pos = original_square_pos
 					promotion_to_pos = Vector2(new_col, new_row)
-					show_promotion_popup(promotion_to_pos)
-					dragging_piece.global_position = get_global_mouse_position()
-					return 
+					uci_move += active_promotion_piece 
 				
-				var uci_move = pos_to_notation(original_square_pos) + pos_to_notation(Vector2(new_col, new_row))
-				print("Orijinal Square Pozisyonu: ",original_square_pos)
-				print("Yeni Pozisyon ",Vector2(new_col, new_row))
+				print("Orijinal Square Pozisyonu: ", original_square_pos)
+				print("Yeni Pozisyon ", Vector2(new_col, new_row))
 				pending_move = uci_move
 				is_waiting_for_legal_check = true
 				print("Tahta Ters mi ", is_board_flipped)
 				print("[Sistem] Gönderilen UCI Hamlesi: ", uci_move)
+				
 				var moves_str = " ".join(move_history)
 				send_to_engine("position startpos moves " + moves_str)
 				send_to_engine("checklegal " + uci_move)
@@ -340,7 +399,6 @@ func make_engine_move(uci_move: String):
 	
 	var from_pos = basic_notation_to_pos(uci_move.substr(0, 2))
 	var to_pos = basic_notation_to_pos(uci_move.substr(2, 2))
-	
 	var from_square = grid_container.get_child(from_pos.y * 8 + from_pos.x)
 	var to_square = grid_container.get_child(to_pos.y * 8 + to_pos.x)
 	
@@ -359,12 +417,20 @@ func make_engine_move(uci_move: String):
 				if child is Sprite2D:
 					has_target_piece = true
 					break
+			
 			if not has_target_piece:
-				var victim_row = to_pos.y + 1 if piece_name.begins_with("b") else to_pos.y - 1
-				var victim_square = grid_container.get_child(victim_row * 8 + to_pos.x)
-				for child in victim_square.get_children():
-					if child is Sprite2D:
-						child.queue_free()
+				var victim_row: int
+				if piece_name.begins_with("w"):
+					victim_row = to_pos.y + 1 if not is_board_flipped else to_pos.y - 1
+				else:
+					victim_row = to_pos.y - 1 if not is_board_flipped else to_pos.y + 1
+				
+				if victim_row >= 0 and victim_row < 8:
+					var victim_square = grid_container.get_child(victim_row * 8 + to_pos.x)
+					for child in victim_square.get_children():
+						if child is Sprite2D:
+							child.queue_free()
+							print("[Sistem]: Motorun En Passant hamlesiyle piyon başarıyla silindi.")
 		
 		if piece_name == "wK" or piece_name == "bK": 
 			if uci_move.substr(0,4) == "e1g1": move_rook_manually("h1", "f1")
@@ -430,37 +496,6 @@ func setup_board():
 					piece_sprite.rotation = PI if is_board_flipped else 0.0
 					square.add_child(piece_sprite)
 
-func show_promotion_popup(target_pos: Vector2):
-	is_promoting = true
-	if promotion_popup:
-		promotion_popup.queue_free()
-	promotion_popup = HBoxContainer.new()
-	promotion_popup.global_position = BOARD_OFFSET + (target_pos * SQUARE_SIZE) - Vector2(0, SQUARE_SIZE)
-	promotion_popup.z_index = 200
-	add_child(promotion_popup)
-	var options = {"q": "wQ", "r": "wR", "b": "wB", "n": "wN"}
-	for key in options:
-		var btn = TextureButton.new()
-		var path = "res://" + options[key] + ".svg"
-		if ResourceLoader.exists(path):
-			btn.texture_normal = load(path)
-			btn.custom_minimum_size = Vector2(SQUARE_SIZE, SQUARE_SIZE)
-			btn.ignore_texture_size = true
-			btn.stretch_mode = TextureButton.STRETCH_SCALE
-			btn.pressed.connect(self._on_promotion_piece_selected.bind(key, options[key]))
-			promotion_popup.add_child(btn)
-
-func _on_promotion_piece_selected(piece_code: String, piece_name: String):
-	promotion_popup.queue_free()
-	promotion_popup = null
-	is_promoting = false
-	var uci_move = pos_to_notation(promotion_from_pos) + pos_to_notation(promotion_to_pos) + piece_code
-	pending_move = uci_move
-	is_waiting_for_legal_check = true
-	var moves_str = " ".join(move_history)
-	send_to_engine("position startpos moves " + moves_str)
-	send_to_engine("checklegal " + uci_move)
-	
 func flip_board():
 	is_board_flipped = !is_board_flipped
 	grid_container.pivot_offset = Vector2(SQUARE_SIZE * 4, SQUARE_SIZE * 4)
@@ -470,6 +505,32 @@ func flip_board():
 			if child is Sprite2D:
 				child.centered = true
 				child.rotation = PI if is_board_flipped else 0.0
+				
+	var menu_container : VBoxContainer = null
+	for child in get_children():
+		if child is VBoxContainer:
+			menu_container = child
+			break
+			
+	if menu_container:
+		var promo_hbox : HBoxContainer = null
+		for child in menu_container.get_children():
+			if child is HBoxContainer and child != menu_container.get_child(0):
+				promo_hbox = child
+				break
+				
+		if promo_hbox:
+			var human_color = "b" if is_board_flipped else "w"
+			var promo_options = {"q": human_color + "Q", "r": human_color + "R", "b": human_color + "B", "n": human_color + "N"}
+			var buttons = promo_hbox.get_children()
+			var keys = ["q", "r", "b", "n"]
+			
+			for i in range(buttons.size()):
+				if buttons[i] is TextureButton:
+					var key = keys[i]
+					var path = "res://" + promo_options[key] + ".svg"
+					if ResourceLoader.exists(path):
+						buttons[i].texture_normal = load(path)
 				
 	if is_board_flipped and move_history.size() == 0 and not is_waiting_for_legal_check:
 		print("[Sistem]: Oyuncu Siyah oldu, Botkut Beyazlar ile açılış hamlesini düşünüyor...")
