@@ -124,37 +124,43 @@ void Board::parseFEN(const std::string& fen) {
     for (int i = 0; i < 12; i++) piecesBB[i] = 0ULL;
     colorBB[0] = colorBB[1] = colorBB[2] = 0ULL;
     castlingRights = 0;
+    enPassantSq = -1;
 
-    int rank = 7, file = 0, i = 0;
-
+    int rank = 7, file = 0;
+    size_t i = 0;
     while (i < fen.length() && fen[i] != ' ') {
         char c = fen[i++];
         if (c == '/') { rank--; file = 0; continue; }
         if (isdigit(c)) { file += (c - '0'); continue; }
         
-        int sq = rank * 8 + file;
-        switch (c) {
-            case 'P': setBit(piecesBB[W_PAWN], sq); break;
-            case 'N': setBit(piecesBB[W_KNIGHT], sq); break;
-            case 'B': setBit(piecesBB[W_BISHOP], sq); break;
-            case 'R': setBit(piecesBB[W_ROOK], sq); break;
-            case 'Q': setBit(piecesBB[W_QUEEN], sq); break;
-            case 'K': setBit(piecesBB[W_KING], sq); updateKingSquares(WHITE,sq); break;
-            case 'p': setBit(piecesBB[B_PAWN], sq); break;
-            case 'n': setBit(piecesBB[B_KNIGHT], sq); break;
-            case 'b': setBit(piecesBB[B_BISHOP], sq); break;
-            case 'r': setBit(piecesBB[B_ROOK], sq); break;
-            case 'q': setBit(piecesBB[B_QUEEN], sq); break;
-            case 'k': setBit(piecesBB[B_KING], sq); updateKingSquares(BLACK,sq); break;
+        if (rank >= 0 && rank < 8 && file >= 0 && file < 8) {
+            int sq = rank * 8 + file;
+            switch (c) {
+                case 'P': setBit(piecesBB[W_PAWN], sq); break;
+                case 'N': setBit(piecesBB[W_KNIGHT], sq); break;
+                case 'B': setBit(piecesBB[W_BISHOP], sq); break;
+                case 'R': setBit(piecesBB[W_ROOK], sq); break;
+                case 'Q': setBit(piecesBB[W_QUEEN], sq); break;
+                case 'K': setBit(piecesBB[W_KING], sq); updateKingSquares(WHITE, sq); break;
+                case 'p': setBit(piecesBB[B_PAWN], sq); break;
+                case 'n': setBit(piecesBB[B_KNIGHT], sq); break;
+                case 'b': setBit(piecesBB[B_BISHOP], sq); break;
+                case 'r': setBit(piecesBB[B_ROOK], sq); break;
+                case 'q': setBit(piecesBB[B_QUEEN], sq); break;
+                case 'k': setBit(piecesBB[B_KING], sq); updateKingSquares(BLACK, sq); break;
+            }
         }
         file++;
     }
 
-    i++; 
+    while (i < fen.length() && isspace(fen[i])) i++;
+
     if (i < fen.length()) {
         sideToMove = (fen[i] == 'w') ? WHITE : BLACK;
-        i += 2; 
+        i++;
     }
+
+    while (i < fen.length() && isspace(fen[i])) i++;
 
     while (i < fen.length() && fen[i] != ' ') {
         switch (fen[i]) {
@@ -165,14 +171,19 @@ void Board::parseFEN(const std::string& fen) {
         }
         i++;
     }
-    i++;
 
-    if (i < fen.length() && fen[i] != '-') {
-        int ep_file = fen[i++] - 'a';
-        int ep_rank = fen[i++] - '1';
-        enPassantSq = ep_rank * 8 + ep_file;
-    } else {
-        enPassantSq = -1;
+    while (i < fen.length() && isspace(fen[i])) i++;
+
+    if (i < fen.length() && fen[i] != '-' && fen[i] != ' ') {
+        if (i + 1 < fen.length() && fen[i] >= 'a' && fen[i] <= 'h' && fen[i+1] >= '1' && fen[i+1] <= '8') {
+            int ep_file = fen[i++] - 'a';
+            int ep_rank = fen[i++] - '1';
+            enPassantSq = ep_rank * 8 + ep_file;
+        } else {
+            i++;
+        }
+    } else if (i < fen.length() && fen[i] == '-') {
+        i++;
     }
 
     setupBoardArray();

@@ -38,6 +38,9 @@ var is_board_flipped: bool = false
 var depth_spinbox: SpinBox = null
 var active_promotion_piece: String = "q"
 var is_debug_sandbox_mode: bool = false
+var current_board_fen: String = ""
+var fen_input_field: LineEdit = null
+var fen_load_btn: Button = null
 
 func _ready():
 	DisplayServer.window_set_size(Vector2i(1280, 800))
@@ -91,6 +94,25 @@ func _ready():
 	restart_button.pressed.connect(self.restart_game)
 	menu_container.add_child(restart_button)
 
+	var fen_label = Label.new()
+	fen_label.text = "FEN Pozisyonu Yükle:"
+	menu_container.add_child(fen_label)
+	
+	var fen_hbox = HBoxContainer.new()
+	fen_hbox.add_theme_constant_override("separation", 10)
+	menu_container.add_child(fen_hbox)
+	
+	fen_input_field = LineEdit.new()
+	fen_input_field.placeholder_text = "FEN String yapıştırın..."
+	fen_input_field.custom_minimum_size = Vector2(250, 40)
+	fen_hbox.add_child(fen_input_field)
+	
+	fen_load_btn = Button.new()
+	fen_load_btn.text = "Yükle"
+	fen_load_btn.custom_minimum_size = Vector2(80, 40)
+	fen_load_btn.pressed.connect(self.load_custom_fen)
+	fen_hbox.add_child(fen_load_btn)
+
 	var promo_label = Label.new()
 	promo_label.text = "Piyon Terfi Tercihi:"
 	menu_container.add_child(promo_label)
@@ -134,6 +156,9 @@ func _ready():
 	grid_container.add_theme_constant_override("h_separation", 0)
 	grid_container.add_theme_constant_override("v_separation", 0)
 	grid_container.position = BOARD_OFFSET
+	
+	current_board_fen = generate_fen_from_array(starting_board)
+	
 	setup_board()
 	start_chess_engine()
 
@@ -182,6 +207,126 @@ func check_engine_output():
 						process_engine_line(final_line)
 				else:
 					output_buffer += character
+
+func generate_fen_from_array(board_array: Array) -> String:
+	var fen_rows = []
+	for row in range(8):
+		var fen_row = ""
+		var empty_count = 0
+		for col in range(8):
+			var piece = board_array[row][col]
+			if piece == "":
+				empty_count += 1
+			else:
+				if empty_count > 0:
+					fen_row += str(empty_count)
+					empty_count = 0
+				var color_char = piece.substr(0, 1)
+				var type_char = piece.substr(1, 1)
+				if color_char == "w":
+					fen_row += type_char.to_upper()
+				else:
+					fen_row += type_char.to_lower()
+		if empty_count > 0:
+			fen_row += str(empty_count)
+		fen_rows.append(fen_row)
+	
+	var fen_string = "/".join(fen_rows)
+	fen_string += " w KQkq - 0 1"
+	return fen_string
+
+func load_custom_fen():
+	if fen_input_field == null or fen_load_btn == null: return
+	var raw_fen = fen_input_field.text.strip_edges()
+	if raw_fen == "": return
+	
+	var fen_regex = RegEx.new()
+	fen_regex.compile(r"\s*^(((?:[rnbqkpRNBQKP1-8]+\/){7})[rnbqkpRNBQKP1-8]+)\s([b|w])\s(-|[K|Q|k|q]{1,4})\s(-|[a-h][1-8])\s(\d+\s\d+)$")
+	
+	var regex_match = fen_regex.search(raw_fen)
+	if not regex_match:
+		print("[HATA]: Geçersiz FEN formatı! Girdi resmi satranç standartlarına uymuyor.")
+		fen_load_btn.modulate = Color(1, 0.3, 0.3)
+		return
+		
+	var parts = raw_fen.split(" ")
+	var fen_rows = parts[0].split("/")
+	
+	for row_idx in range(8):
+		var current_row_str = fen_rows[row_idx]
+		var square_count_in_row = 0
+		for char_idx in range(current_row_str.length()):
+			var ch = current_row_str[char_idx]
+			if ch.is_valid_int():
+				square_count_in_row += int(ch)
+			else:
+				square_count_in_row += 1
+		if square_count_in_row != 8:
+			print("[HATA]: Satırdaki kare sayısı 8 olmak zorundadır! Hatalı satır: ", row_idx + 1)
+			fen_load_btn.modulate = Color(1, 0.3, 0.3)
+			return
+			
+	print("[Sistem]: Özel FEN başarıyla doğrulandı ve yükleniyor: ", raw_fen)
+	fen_load_btn.modulate = Color(1, 1, 1)
+	
+	move_history.clear()
+	is_waiting_for_legal_check = false
+	dragging_piece = null
+	pending_move = ""
+	current_board_fen = raw_fen
+	
+	for child in grid_container.get_children():
+		child.queue_free()
+		
+	for row in range(8):
+		var fen_row = fen_rows[row]
+		var col = 0
+		var i = 0
+		
+		while i < fen_row.length() and col < 8:
+			var c = fen_row[i]
+			if c.is_valid_int():
+				var empty_squares = int(c)
+				for s in range(empty_squares):
+					if col < 8:
+						var square = ColorRect.new()
+						square.custom_minimum_size = Vector2(SQUARE_SIZE, SQUARE_SIZE)
+						square.color = COLOR_LIGHT if (row + col) % 2 == 0 else COLOR_DARK
+						grid_container.add_child(square)
+						col += 1
+			else:
+				var square = ColorRect.new()
+				square.custom_minimum_size = Vector2(SQUARE_SIZE, SQUARE_SIZE)
+				square.color = COLOR_LIGHT if (row + col) % 2 == 0 else COLOR_DARK
+				grid_container.add_child(square)
+				
+				var piece_color = "w" if c == c.to_upper() else "b"
+				var piece_type = c.to_upper()
+				var piece_name = piece_color + piece_type
+				
+				var piece_sprite = Sprite2D.new()
+				var path = "res://" + piece_name + ".svg"
+				if ResourceLoader.exists(path):
+					piece_sprite.texture = load(path)
+					piece_sprite.position = Vector2(SQUARE_SIZE / 2, SQUARE_SIZE / 2)
+					piece_sprite.scale = Vector2(SQUARE_SIZE / 64.0, SQUARE_SIZE / 64.0)
+					piece_sprite.set_meta("piece_name", piece_name)
+					piece_sprite.centered = true
+					piece_sprite.rotation = PI if is_board_flipped else 0.0
+					square.add_child(piece_sprite)
+				col += 1
+			i += 1
+			
+	send_to_engine("ucinewgame")
+	send_to_engine("position fen " + current_board_fen)
+	eval_label.text = "0.00"
+	eval_label.modulate = Color.GRAY
+	
+	var active_color = parts[1].to_lower()
+	if not is_debug_sandbox_mode:
+		var bot_color = "b" if not is_board_flipped else "w"
+		if active_color == bot_color:
+			trigger_engine_search()
 
 func process_engine_line(line: String):
 	print("[Botkut]: ", line)
@@ -335,14 +480,22 @@ func _input(event):
 						var piece_name = child.get_meta("piece_name") if child.has_meta("piece_name") else ""
 						var is_white_turn = (move_history.size() % 2 == 0)
 						
+						var current_active_color = "w"
+						var fen_parts = current_board_fen.split(" ")
+						if fen_parts.size() > 1:
+							current_active_color = fen_parts[1]
+							
+						var real_turn = "w" if is_white_turn else "b"
+						if fen_parts.size() > 1 and current_active_color == "b":
+							real_turn = "b" if is_white_turn else "w"
+						
 						if is_debug_sandbox_mode:
-							var expected_color = "w" if is_white_turn else "b"
-							if not piece_name.begins_with(expected_color):
-								print("[Sandbox]: Şu an hamle sırası ", "Beyazda!" if is_white_turn else "Siyahta!")
+							if not piece_name.begins_with(real_turn):
+								print("[Sandbox]: Şu an hamle sırası ", "Beyazda!" if real_turn == "w" else "Siyahta!")
 								return
 						else:
 							var human_color = "b" if is_board_flipped else "w"
-							var is_my_turn = (is_white_turn and human_color == "w") or (not is_white_turn and human_color == "b")
+							var is_my_turn = (real_turn == human_color)
 					
 							if not is_my_turn or not piece_name.begins_with(human_color):
 								print("[Sistem]: Şu an sizin sıranız değil veya rakip taşı seçtiniz!")
@@ -377,8 +530,11 @@ func _input(event):
 				print("Tahta Ters mi ", is_board_flipped)
 				print("[Sistem] Gönderilen UCI Hamlesi: ", uci_move)
 				
-				var moves_str = " ".join(move_history)
-				send_to_engine("position startpos moves " + moves_str)
+				var position_cmd = "position fen " + current_board_fen
+				if move_history.size() > 0:
+					position_cmd += " moves " + " ".join(move_history)
+					
+				send_to_engine(position_cmd)
 				send_to_engine("checklegal " + uci_move)
 				dragging_piece.global_position = get_global_mouse_position()
 			else:
@@ -390,9 +546,12 @@ func trigger_engine_search():
 	if depth_spinbox != null:
 		current_depth = int(depth_spinbox.value)
 		
-	var moves_str = " ".join(move_history)
-	send_to_engine("position startpos moves " + moves_str)
-	send_to_engine("go depth " + str(current_depth)+" wtime 4000 btime 4000 movestogo 1") 
+	var position_cmd = "position fen " + current_board_fen
+	if move_history.size() > 0:
+		position_cmd += " moves " + " ".join(move_history)
+		
+	send_to_engine(position_cmd)
+	send_to_engine("go depth " + str(current_depth) + " wtime 4000 btime 4000 movestogo 1") 
 
 func make_engine_move(uci_move: String):
 	if uci_move.length() < 4: return
@@ -543,9 +702,10 @@ func restart_game():
 	is_waiting_for_legal_check = false
 	dragging_piece = null
 	pending_move = ""
+	current_board_fen = generate_fen_from_array(starting_board)
 	setup_board()
 	send_to_engine("ucinewgame")
-	send_to_engine("position startpos")
+	send_to_engine("position fen " + current_board_fen)
 	eval_label.text = "0.00"
 	eval_label.modulate = Color.GRAY
 	if is_board_flipped:

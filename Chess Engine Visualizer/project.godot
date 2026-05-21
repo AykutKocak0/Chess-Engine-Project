@@ -11,6 +11,7 @@ config_version=5
 [application]
 
 config/name="Chess Visualizer"
+run/main_scene="uid://x7opw4o0yax4"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 

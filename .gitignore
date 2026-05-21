@@ -5,3 +5,5 @@
 build/
 .vscode/
 .godot/
+*.pck
+export_presets.cfg
