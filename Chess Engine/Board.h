@@ -44,6 +44,7 @@ public:
     void unmakeNullMove();
     bool SEECalculation(const Board& board,int sq, Color attackerColor);
     void removeAttackerOcc(uint64_t &occupancy, int attackerType);
+    bool isLegalMove(Move move);
 
 
 private:

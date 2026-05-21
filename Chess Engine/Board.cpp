@@ -688,3 +688,25 @@ bool Board::SEECalculation(const Board& board, int sq, Color attackerColor) {
     return gain[0] >= 0;
 }
 
+bool Board::isLegalMove(Move move) {
+    Move moveList[256];
+    int moveCount = GenerateMoves::generateMoves(*this, moveList);
+    
+    bool inArray = false;
+    for (int i = 0; i < moveCount; i++) {
+        if (moveList[i] == move) {
+            inArray = true;
+            break;
+        }
+    }
+    
+    if (!inArray) return false;
+
+    bool isHappened = makeMove(move);
+    if (isHappened) {
+        unmakeMove(move);
+        return true;
+    }
+
+    return false;
+}

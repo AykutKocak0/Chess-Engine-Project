@@ -24,12 +24,12 @@ class GenerateMoves {
         static uint64_t genPawnAttacks(int sq, Color color);
         static uint64_t genKingPlaces(int sq);
 
-        void generateBishopMoves(const Board& board, Move* moveList, Color color, int& moveCount);
-        void generateQueenMoves(const Board& board, Move* moveList, Color color, int& moveCount);
-        void generateRookMoves(const Board& board, Move* moveList, Color color, int& moveCount);
-        void generatePawnMoves(const Board& board, Move* moveList, Color color, int& moveCount);
-        void generateKnightMoves(const Board& board, Move* moveList, Color color, int& moveCount);
-        void generateKingMoves(const Board& board, Move* moveList, Color color, int& moveCount);
+        static void generateBishopMoves(const Board& board, Move* moveList, Color color, int& moveCount);
+        static void generateQueenMoves(const Board& board, Move* moveList, Color color, int& moveCount);
+        static void generateRookMoves(const Board& board, Move* moveList, Color color, int& moveCount);
+        static void generatePawnMoves(const Board& board, Move* moveList, Color color, int& moveCount);
+        static void generateKnightMoves(const Board& board, Move* moveList, Color color, int& moveCount);
+        static void generateKingMoves(const Board& board, Move* moveList, Color color, int& moveCount);
 
         void generateBishopCaptures(const Board& board, Move* moveList, Color color, int& moveCount);
         void generateQueenCaptures(const Board& board, Move* moveList, Color color, int& moveCount);
@@ -54,7 +54,7 @@ class GenerateMoves {
         std::string squareToString(int sq);
         void printMoveList(const std::vector<Move>& moveList);
         static void init();
-        int generateMoves(const Board& board, Move* moveList);
+        static int generateMoves(const Board& board, Move* moveList);
         int generateCaptureMoves(const Board& board, Move* moveList, Color color);
         int generateQuietCheckMoves(const Board& board, Move* moveList, Color color, int moveCount);
         static uint64_t getKnightMoves(int sq){return knightMoves[sq];}

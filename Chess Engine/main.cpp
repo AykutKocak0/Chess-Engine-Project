@@ -153,6 +153,18 @@ int main() {
             //search.startSearch(board, 8);
             std::cout<<"BOARD PAWN KEY: "<<board.getPawnKey()<<std::endl;
         }
+        else if (command == "checklegal") {
+            std::string moveStr;
+            ss >> moveStr; 
+            
+            Move move = parseMove(board,moveStr,search); 
+            
+            if (board.isLegalMove(move)) {
+                std::cout << "check_result legal" << std::endl;
+            } else {
+                std::cout << "check_result illegal" << std::endl;
+            }
+        }
     }
     return 0;
 }
