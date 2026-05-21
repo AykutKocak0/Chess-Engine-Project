@@ -1,0 +1,17 @@
+[gd_scene format=3 uid="uid://x7opw4o0yax4"]
+
+[ext_resource type="Script" uid="uid://da5jr8d8q3rot" path="res://node_2d.gd" id="1_wtcfe"]
+
+[node name="Node2D" type="Node2D" unique_id=1284532973]
+script = ExtResource("1_wtcfe")
+
+[node name="GridContainer" type="GridContainer" parent="." unique_id=155439365]
+offset_right = 40.0
+offset_bottom = 40.0
+columns = 8
+
+[node name="EvalLabel" type="Label" parent="." unique_id=1023259971]
+custom_minimum_size = Vector2(800, 40)
+offset_right = 40.0
+offset_bottom = 23.0
+text = "0.00"
