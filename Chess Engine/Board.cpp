@@ -242,12 +242,12 @@ bool Board::makeMove(Move move) {
         updateCastlingRights(fromSq, toSq); 
         enPassantSq = -1;
         sideToMove = them;
-         zobristKey ^= zobristPieces[movedPiece][fromSq];
-         zobristKey ^= zobristPieces[captured][victimSq];
-         zobristKey ^= zobristPieces[movedPiece][toSq];
-         zobristKey ^= zobristCastling[current.castlingRights];
-         zobristKey ^= zobristCastling[castlingRights];
-         zobristKey ^= zobristSide;
+        zobristKey ^= zobristPieces[movedPiece][fromSq];
+        zobristKey ^= zobristPieces[captured][victimSq];
+        zobristKey ^= zobristPieces[movedPiece][toSq];
+        zobristKey ^= zobristCastling[current.castlingRights];
+        zobristKey ^= zobristCastling[castlingRights];
+        zobristKey ^= zobristSide;
          if(current.enPassantSq != -1) zobristKey ^= zobristEnPassant[current.enPassantSq % 8];
         historyStack[historyCount++] = zobristKey;
          int kingSq = getLS1B(piecesBB[us == WHITE ? W_KING : B_KING]);
@@ -287,12 +287,12 @@ bool Board::makeMove(Move move) {
         updateCastlingRights(fromSq, toSq);
         enPassantSq = -1;
         sideToMove = them;
-         zobristKey ^= zobristPieces[movedPiece][fromSq];
-         if(capture) zobristKey ^= zobristPieces[victim][toSq];
-         zobristKey ^= zobristPieces[promotedPiece][toSq];
-         zobristKey ^= zobristCastling[current.castlingRights];
-         zobristKey ^= zobristCastling[castlingRights];
-         zobristKey ^= zobristSide;
+        zobristKey ^= zobristPieces[movedPiece][fromSq];
+        if(capture) zobristKey ^= zobristPieces[victim][toSq];
+        zobristKey ^= zobristPieces[promotedPiece][toSq];
+        zobristKey ^= zobristCastling[current.castlingRights];
+        zobristKey ^= zobristCastling[castlingRights];
+        zobristKey ^= zobristSide;
         if(current.enPassantSq != -1) zobristKey ^= zobristEnPassant[current.enPassantSq % 8];
         historyStack[historyCount++] = zobristKey;  
         int kingSq = getLS1B(piecesBB[us == WHITE ? W_KING : B_KING]);
@@ -358,13 +358,13 @@ bool Board::makeMove(Move move) {
         enPassantSq = -1;
     }
     sideToMove = them;
-     zobristKey ^= zobristPieces[movedPiece][fromSq];
-     zobristKey ^= zobristPieces[movedPiece][toSq];
-     zobristKey ^= zobristCastling[current.castlingRights];
-     zobristKey ^= zobristCastling[castlingRights];
-     zobristKey ^= zobristSide;
-     if(current.enPassantSq != -1) zobristKey ^= zobristEnPassant[current.enPassantSq % 8];
-     if(enPassantSq != -1) zobristKey ^= zobristEnPassant[enPassantSq % 8];
+    zobristKey ^= zobristPieces[movedPiece][fromSq];
+    zobristKey ^= zobristPieces[movedPiece][toSq];
+    zobristKey ^= zobristCastling[current.castlingRights];
+    zobristKey ^= zobristCastling[castlingRights];
+    zobristKey ^= zobristSide;
+    if(current.enPassantSq != -1) zobristKey ^= zobristEnPassant[current.enPassantSq % 8];
+    if(enPassantSq != -1) zobristKey ^= zobristEnPassant[enPassantSq % 8];
 
     int kingSq = getLS1B(piecesBB[us == WHITE ? W_KING : B_KING]);
     historyStack[historyCount++] = zobristKey; 
@@ -615,10 +615,11 @@ uint64_t Board::calculateZobristFromScratch() {
 bool Board::isRepetition() {
     if (historyCount < 4) return false;
     int limit = std::max(0, historyCount-gameState.fiftyMoveClock);
+    int repetitionCount = 1;
     for (int i = historyCount - 3; i >= limit; i -= 2) {
         if (historyStack[i] == zobristKey) {
-            
-            return true;
+            repetitionCount++;
+            if(repetitionCount == 3) return true;
             
         }
     }

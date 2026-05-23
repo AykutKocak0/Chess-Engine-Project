@@ -10,7 +10,7 @@
 using namespace Constants;
 
 const int mgPassedBonus[8] = { 0, 5, 10, 20, 40, 70, 100, 0 };
-const int egPassedBonus[8] = { 0, 10, 30, 60, 120, 200, 350, 0 };
+const int egPassedBonus[8] = { 0, 10, 25, 50, 100, 160, 260, 0 };
 const int knightEgMobility[9]  = { -40, -30, -15,  -5,   5,  15,  25,  35,  40 };
 const int knightMgMobility[9]  = { -20, -15,  -8,  -2,   2,   8,  12,  16,  20 };
 
@@ -78,9 +78,8 @@ int EngineEval::evaluate(const Board& board){
 
     score+=evaluatePieceSquareTable(board,phase);
 
-    // Mop up
     if(phase >150){
-        Color winner = (materialDiff > 200) ? WHITE : BLACK;
+        Color winner = (materialDiff > 0) ? WHITE : BLACK;
         int mopUp=mopUpEval(board, winner, phase, bishopKnightEndgame);
         score += (mopUp * (phase - 150)) / (256 - 150);
     }
@@ -95,7 +94,7 @@ int EngineEval::evaluate(const Board& board){
     
     score+= kingSafetyEval(board,phase);
     
-    score+=underDevelopmentPenalty(board,phase);
+    // score+=underDevelopmentPenalty(board,phase);
     
     score+=threatEval(board,phase,whitePawnAttacks,blackPawnAttacks);
     
@@ -194,100 +193,106 @@ int EngineEval::bishopPair(const Board& board, int phase){
     return finalBonus;
 }
 
+
 int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t whitePawnAttacks, uint64_t blackPawnAttacks) {
     int mgScore = 0, egScore = 0;
     uint64_t pawnKey = board.getPawnKey();
     PawnEntry* entry = PTT.pawnProbe(pawnKey);
     
     if (entry != nullptr && entry->key == pawnKey) {
-        mgScore = entry->mgScore;
-        egScore = entry->egScore;
-        
+        return ((entry->egScore * phase) + (entry->mgScore * (256 - phase))) / 256;
     }
-    else {
-        uint64_t whitePawns = board.getPieceBB(W_PAWN);
-        uint64_t blackPawns = board.getPieceBB(B_PAWN);
-        
 
-        if (whitePawns & (1ULL << 28)) { mgScore += 25; egScore += 10; } // e4
-        if (whitePawns & (1ULL << 27)) { mgScore += 25; egScore += 10; } // d4
-        if (blackPawns & (1ULL << 36)) { mgScore -= 25; egScore -= 10; } // e5
-        if (blackPawns & (1ULL << 35)) { mgScore -= 25; egScore -= 10; } // d5
-        
-        if ((whitePawns & (1ULL << 28)) && (whitePawns & (1ULL << 27))) { mgScore += 18; egScore += 9; }
-        if ((blackPawns & (1ULL << 36)) && (blackPawns & (1ULL << 35))) { mgScore -= 18; egScore -= 9; }
+    uint64_t whitePawns = board.getPieceBB(W_PAWN);
+    uint64_t blackPawns = board.getPieceBB(B_PAWN);
 
-        for (int i = 0; i < 8; i++) {
-            uint64_t wPawnsOnFile = whitePawns & FileMasks[i];
-            uint64_t bPawnsOnFile = blackPawns & FileMasks[i];
+    if (whitePawns & (1ULL << e4)) { mgScore += 12; egScore += 5; }
+    if (whitePawns & (1ULL << d4)) { mgScore += 12; egScore += 5; }
+    if (blackPawns & (1ULL << e5)) { mgScore -= 12; egScore -= 5; }
+    if (blackPawns & (1ULL << d5)) { mgScore -= 12; egScore -= 5; }
 
-            if (wPawnsOnFile & (wPawnsOnFile - 1)) { mgScore -= 20; egScore -= 25; }
-            if (bPawnsOnFile & (bPawnsOnFile - 1)) { mgScore += 20; egScore += 25; }
+    if ((whitePawns & (1ULL << e4)) && (whitePawns & (1ULL << d4))) { mgScore += 12; egScore += 6; }
+    if ((blackPawns & (1ULL << e5)) && (blackPawns & (1ULL << d5))) { mgScore -= 12; egScore -= 6; }
 
-            uint64_t adj = 0;
-            if (i > 0) adj |= FileMasks[i - 1];
-            if (i < 7) adj |= FileMasks[i + 1];
+    for (int i = 0; i < 8; i++) {
+        uint64_t wPawnsOnFile = whitePawns & FileMasks[i];
+        uint64_t bPawnsOnFile = blackPawns & FileMasks[i];
 
-            uint64_t tempW = wPawnsOnFile;
-            while (tempW) {
-                int whiteSq = getLS1B(tempW);
+        if (wPawnsOnFile & (wPawnsOnFile - 1)) { mgScore -= 10; egScore -= 20; }
+        if (bPawnsOnFile & (bPawnsOnFile - 1)) { mgScore += 10; egScore += 20; }
 
-                if (!(whitePawns & adj)) { 
-                    mgScore -= 15; 
-                    egScore -= 25; 
-                }
+        uint64_t adj = 0;
+        if (i > 0) adj |= FileMasks[i - 1];
+        if (i < 7) adj |= FileMasks[i + 1];
 
-                if (!(blackPawns & PassedPawnMasks[WHITE][whiteSq])) {
-                    int rank = whiteSq / 8;
-                    mgScore += mgPassedBonus[rank];
-                    egScore += egPassedBonus[rank];
-                    
-                    if (whitePawnAttacks & (1ULL << whiteSq)) { 
-                        mgScore += 25; 
-                        egScore += 60; 
-                    }
-                }
-                else if(whiteSq < 56 && !(blackPawns & PassedPawnMasks[WHITE][whiteSq + 8]) && !(blackPawns & (1ULL << (whiteSq + 8)))) {
-                    int rank = (whiteSq + 8) / 8;
-                    mgScore += mgPassedBonus[rank] / 2; 
-                    egScore += egPassedBonus[rank] / 2; 
-                }
-                popBit(tempW, whiteSq); 
+        bool wIsolated = !(whitePawns & adj);
+        bool bIsolated = !(blackPawns & adj);
+
+        uint64_t tempW = wPawnsOnFile;
+        while (tempW) {
+            int whiteSq = getLS1B(tempW);
+            int rank = whiteSq / 8;
+
+            if (wIsolated) {
+                mgScore -= 10;
+                egScore -= 20;
             }
 
-            uint64_t tempB = bPawnsOnFile;
-            while (tempB) {
-                int blackSq = getLS1B(tempB);
+            if (!(blackPawns & PassedPawnMasks[WHITE][whiteSq])) {
+                mgScore += mgPassedBonus[rank];
+                egScore += egPassedBonus[rank];
 
-                if (!(blackPawns & adj)) { 
-                    mgScore += 15; 
-                    egScore += 25; 
-                } 
-                
-                if (!(whitePawns & PassedPawnMasks[BLACK][blackSq])) {
-                    int rank = blackSq / 8; 
-                    mgScore -= mgPassedBonus[7 - rank];
-                    egScore -= egPassedBonus[7 - rank];
-
-                    if (blackPawnAttacks & (1ULL << blackSq)) { 
-                        mgScore -= 25; 
-                        egScore -= 60; 
-                    }
+                if (whitePawnAttacks & (1ULL << whiteSq)) {
+                    mgScore += 10;
+                    egScore += 25;
                 }
-                else if(blackSq > 7 && !(whitePawns & PassedPawnMasks[BLACK][blackSq - 8]) && !(whitePawns & (1ULL << (blackSq - 8)))) {
-                    int rank = (blackSq - 8) / 8;
-                    
-                    mgScore -= mgPassedBonus[7 - rank] / 2;
-                    egScore -= egPassedBonus[7 - rank] / 2; 
-                }
-                popBit(tempB, blackSq);
             }
+
+            else if (rank < 6 && !(blackPawns & PassedPawnMasks[WHITE][whiteSq + 8])
+                              && !(blackPawns & (1ULL << (whiteSq + 8))))
+            {
+                int nextRank = rank + 1;
+                mgScore += mgPassedBonus[nextRank] / 2;
+                egScore += egPassedBonus[nextRank] / 2;
+            }
+
+            popBit(tempW, whiteSq);
         }
-        
-        PTT.store(pawnKey, mgScore, egScore);
-    }
-   
 
+        uint64_t tempB = bPawnsOnFile;
+        while (tempB) {
+            int blackSq = getLS1B(tempB);
+            int rank = blackSq / 8;
+
+            // İzole Piyon Cezası
+            if (bIsolated) {
+                mgScore += 10;
+                egScore += 20;
+            }
+
+            if (!(whitePawns & PassedPawnMasks[BLACK][blackSq])) {
+                mgScore -= mgPassedBonus[7 - rank];
+                egScore -= egPassedBonus[7 - rank];
+
+                if (blackPawnAttacks & (1ULL << blackSq)) {
+                    mgScore -= 10;
+                    egScore -= 25;
+                }
+            }
+            // Aday Geçmiş Piyon Kontrolü
+            else if (rank > 1 && !(whitePawns & PassedPawnMasks[BLACK][blackSq - 8])
+                             && !(whitePawns & (1ULL << (blackSq - 8))))
+            {
+                int nextRank = rank - 1;
+                mgScore -= mgPassedBonus[7 - nextRank] / 2;
+                egScore -= egPassedBonus[7 - nextRank] / 2;
+            }
+
+            popBit(tempB, blackSq);
+        }
+    }
+
+    PTT.store(pawnKey, mgScore, egScore);
     return ((egScore * phase) + (mgScore * (256 - phase))) / 256;
 }
 

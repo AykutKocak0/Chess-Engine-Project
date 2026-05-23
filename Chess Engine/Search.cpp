@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <cstring>
 #include "Types.h"
 #include <string>
 #include "Board.h"
@@ -192,6 +193,21 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
         }
     }
     bool wasChecked = board.isInCheck();
+
+    if (!wasChecked && depthLeft <= 2) {
+        int staticEval = board.evaluate();
+        
+        int margin = 300 + 150 * depthLeft * depthLeft; 
+        
+        if (staticEval < alpha - margin) {
+            int value = quiescence(board, alpha - 1, alpha, ply, 0);
+            
+            if (value < alpha && std::abs(value) < 80000) {
+                return value; 
+            }
+        }
+    }
+
     if(!wasChecked && !board.isZugzwang() && depthLeft >= 3 && allowNull){
         int nullReduction = 3;
         board.makeNullMove();
