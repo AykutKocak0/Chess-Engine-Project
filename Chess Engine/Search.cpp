@@ -92,7 +92,7 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
                 bool isKiller = (rootMoveList[i] == killerMoves[0][0] || rootMoveList[i] == killerMoves[0][1]);
                 int reduction = 0;
                 if (currentDepth >= 3 && i >= 4 && !rootMoveList[i].isCapture() && !rootMoveList[i].isPromotion() && !wasChecked && !isKiller) {
-                    reduction = reductionTable[currentDepth][i];
+                    reduction = reductionTable[std::min(currentDepth, 63)][std::min(i, 63)];
                     reduction = std::max(0, std::min(reduction, currentDepth - 2));
                     if(isEndGame){
                         reduction = (reduction == 0) ? reduction : reduction-1;
@@ -162,10 +162,11 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
             stopped = true;
     }
 }
-    if (ply > 0 && (board.isRepetition() || board.gameState.fiftyMoveClock >=100)) {
-        
+    if (ply > 0 && (board.isRepetition() || board.getMovesWH() >=100)) {
+
         return 0;
     }
+    if (ply >= MAX_PLY) return board.evaluate();
     int originalAlpha = alpha;
     Move hashMove;
     bool hasHashMove = false;
@@ -240,8 +241,8 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
             bool isKiller = (moveList[i] == killerMoves[ply][0] || moveList[i] == killerMoves[ply][1]);
             int reduction = 0;
             if (depthLeft >= 3 && i >= 4 && !moveList[i].isCapture() && !moveList[i].isPromotion() && !wasChecked && !isKiller) {
-                reduction = reductionTable[depthLeft][i];
-                reduction = std::min(reduction, depthLeft - 2);        
+                reduction = reductionTable[std::min(depthLeft, 63)][std::min(i, 63)];
+                reduction = std::max(0, std::min(reduction, depthLeft - 2));
             }
             score = -alphaBeta(board, -alpha - 1, -alpha, depthLeft - 1 - reduction, ply + 1, true);
 
@@ -304,6 +305,7 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
 
 int Search::quiescence(Board& board, int alpha, int beta, int ply, int qsDepth) {
     nodes++;
+    if (ply >= MAX_PLY) return board.evaluate();
     bool inCheck = board.isInCheck();
     if (!inCheck) {
         int standPat = board.evaluate();
@@ -340,9 +342,9 @@ int Search::quiescence(Board& board, int alpha, int beta, int ply, int qsDepth) 
     for (int i = 0; i < moveCount; i++) {
         pickBestMove(moveList, moveCount, i);
         bool checkMove = moveList[i].flag == MoveFlag::QUIET;
-        bool SEE = board.SEECalculation(board,moveList[i].to,board.sideToMove);
 
         if(!checkMove && !inCheck){
+            bool SEE = board.SEECalculation(board,moveList[i].to,board.sideToMove);
             if(!SEE) continue;
         }
         if (!board.makeMove(moveList[i])) continue;

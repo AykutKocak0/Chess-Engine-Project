@@ -83,9 +83,8 @@ int main() {
             PTT.clear();
         }
         else if (command == "isready") {
-            TT.clear();
             std::cout << "readyok" << std::endl;
-        } 
+        }
         else if (command == "position") {
             handlePosition(board, ss, search);
         } 

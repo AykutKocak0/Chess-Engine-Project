@@ -614,7 +614,7 @@ uint64_t Board::calculateZobristFromScratch() {
 
 bool Board::isRepetition() {
     if (historyCount < 4) return false;
-    int limit = std::max(0, historyCount-gameState.fiftyMoveClock);
+    int limit = std::max(0, historyCount-movesWithoutHalf);
     int repetitionCount = 1;
     for (int i = historyCount - 3; i >= limit; i -= 2) {
         if (historyStack[i] == zobristKey) {

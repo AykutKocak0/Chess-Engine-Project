@@ -20,13 +20,13 @@ private:
     static int mopUpEval(const Board& board, Color winner, int phase, bool bishopKnightEndgame);
     static int pureEvaluateMaterial(const Board& board, int phase);
     static int kingPawnStructure(const Board& board, Color color, int phase);
-    static int mobilityEval(const Board& board, int phase, Color color, uint64_t enemyPawns);
+    static uint64_t evaluatePieceActivity(const Board& board, Color color, uint64_t enemyPawnAttacks, uint64_t enemyKingZone, int& mgMobility, int& egMobility, int& kingDanger);
     static int checkTrappedPatterns(const Board& board, int phase, Color color);
     static int checkPinnedPieces(const Board& board, int phase);
     static int otherPawn(const Board& board, int phase, uint64_t w, uint64_t s);
-    static int kingSafetyEval(const Board& board, int phase);
+    static int kingSafetyEval(int phase, int dangerToBlack, int dangerToWhite);
     static int underDevelopmentPenalty(const Board& board, int phase);
-    static int threatEval(const Board& board, int phase, uint64_t whitePawnAttacks, uint64_t blackPawnAttacks);
+    static int threatEval(const Board& board, int phase, uint64_t whitePawnAttacks, uint64_t blackPawnAttacks, uint64_t whiteMinorAttacks, uint64_t blackMinorAttacks);
 
 
 

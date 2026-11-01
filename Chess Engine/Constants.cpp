@@ -166,9 +166,6 @@ namespace Constants {
     int reductionTable[64][64];
     uint64_t kingNearSq[2][64];
     void initPieceTables() {
-        int mgValues[6] = { 82, 337, 365, 477, 1025, 0 };
-        int egValues[6] = { 94, 281, 297, 512, 936, 0 };
-
         mgTables[0] = mg_pawn_table;
         mgTables[1] = mg_knight_table;
         mgTables[2] = mg_bishop_table;
@@ -182,13 +179,6 @@ namespace Constants {
         egTables[3] = eg_rook_table;
         egTables[4] = eg_queen_table;
         egTables[5] = eg_king_table;
-
-        for (int type = 0; type < 6; type++) {
-            for (int sq = 0; sq < 64; sq++) {
-                mgTables[type][sq] += mgValues[type];
-                egTables[type][sq] += egValues[type];
-            }
-        }
     }
 
     void initReductionTable() {

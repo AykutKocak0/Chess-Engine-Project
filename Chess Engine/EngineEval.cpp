@@ -63,7 +63,8 @@ int EngineEval::evaluate(const Board& board){
         int wBishop = (int) __builtin_popcountll(board.getPieceBB(W_BISHOP));
         int bKnight = (int) __builtin_popcountll(board.getPieceBB(B_KNIGHT));
         int bBishop = (int) __builtin_popcountll(board.getPieceBB(B_BISHOP));
-        if(wKnight == 1 && wBishop == 1 && blackPieces == 1) bishopKnightEndgame = true;
+        if((wKnight == 2 && blackPieces == 1) || (bKnight == 2 && whitePieces == 1)) return 0;
+        else if(wKnight == 1 && wBishop == 1 && blackPieces == 1) bishopKnightEndgame = true;
         else if(bKnight == 1 && bBishop == 1 && whitePieces == 1) bishopKnightEndgame = true;
     }
     int phase = taperedEval(board);
@@ -81,23 +82,34 @@ int EngineEval::evaluate(const Board& board){
     if(phase >150){
         Color winner = (materialDiff > 0) ? WHITE : BLACK;
         int mopUp=mopUpEval(board, winner, phase, bishopKnightEndgame);
-        score += (mopUp * (phase - 150)) / (256 - 150);
+        score += mopUp;
     }
     
     score+=kingPawnStructure(board,WHITE,phase) - kingPawnStructure(board,BLACK,phase);
 
     score+= checkTrappedPatterns(board, phase, WHITE) - checkTrappedPatterns(board, phase, BLACK);
 
-    score+= mobilityEval(board, phase, WHITE, blackPawnAttacks) - mobilityEval(board, phase, BLACK, whitePawnAttacks);
+    uint64_t whiteKingZone = kingNearSq[0][board.getKingSquare(WHITE)];
+    uint64_t blackKingZone = kingNearSq[1][board.getKingSquare(BLACK)];
+
+    int whiteMgMobility = 0, whiteEgMobility = 0, dangerToBlack = 0;
+    int blackMgMobility = 0, blackEgMobility = 0, dangerToWhite = 0;
+
+    uint64_t whiteMinorAttacks = evaluatePieceActivity(board, WHITE, blackPawnAttacks, blackKingZone, whiteMgMobility, whiteEgMobility, dangerToBlack);
+    uint64_t blackMinorAttacks = evaluatePieceActivity(board, BLACK, whitePawnAttacks, whiteKingZone, blackMgMobility, blackEgMobility, dangerToWhite);
+
+    int whiteMobility = (((256 - phase) * whiteMgMobility) + (whiteEgMobility * phase)) / 256;
+    int blackMobility = (((256 - phase) * blackMgMobility) + (blackEgMobility * phase)) / 256;
+    score += whiteMobility - blackMobility;
 
     score+= checkPinnedPieces(board,phase);
-    
-    score+= kingSafetyEval(board,phase);
-    
+
+    score+= kingSafetyEval(phase, dangerToBlack, dangerToWhite);
+
     // score+=underDevelopmentPenalty(board,phase);
-    
-    score+=threatEval(board,phase,whitePawnAttacks,blackPawnAttacks);
-    
+
+    score+=threatEval(board,phase,whitePawnAttacks,blackPawnAttacks,whiteMinorAttacks,blackMinorAttacks);
+
     return (board.sideToMove == WHITE) ? score : -score;
 }
 
@@ -370,7 +382,9 @@ int EngineEval::mopUpEval(const Board& board, Color winner, int phase, bool bish
         }
     }
     
-    int finalScore = (egScore * phase) / 256;
+    int rampedPhase = phase - 150;
+    if (rampedPhase < 0) rampedPhase = 0;
+    int finalScore = (egScore * rampedPhase) / (256 - 150);
 
     return (winner == WHITE) ? finalScore : -finalScore;
 }
@@ -468,21 +482,23 @@ int EngineEval::kingPawnStructure(const Board& board, Color color, int phase) {
     return (mgScore * (256 - phase)) / 256;
 }
 
-int EngineEval::mobilityEval(const Board& board, int phase, Color color, uint64_t enemyPawnAttacks) {
-    int mgScore = 0;
-    int egScore = 0;
-
+uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint64_t enemyPawnAttacks, uint64_t enemyKingZone, int& mgMobility, int& egMobility, int& kingDanger) {
     uint64_t friends = board.getOccupancy(color);
     uint64_t occupancy = board.getOccupancy(BOTH);
+    uint64_t minorAttacks = 0;
 
     uint64_t knightBB = board.getPieceBB(color == WHITE ? W_KNIGHT : B_KNIGHT);
     while (knightBB) {
         int sq = getLS1B(knightBB);
-        uint64_t freeMoves = GenerateMoves::getKnightMoves(sq) & ~friends & ~enemyPawnAttacks;
-        int count = (int) __builtin_popcountll(freeMoves);
+        uint64_t attacks = GenerateMoves::getKnightMoves(sq);
+        minorAttacks |= attacks;
 
-        mgScore += knightMgMobility[count];
-        egScore += knightEgMobility[count];
+        uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
+        int count = (int) __builtin_popcountll(freeMoves);
+        mgMobility += knightMgMobility[count];
+        egMobility += knightEgMobility[count];
+
+        kingDanger += 2 * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
 
         popBit(knightBB, sq);
     }
@@ -490,12 +506,14 @@ int EngineEval::mobilityEval(const Board& board, int phase, Color color, uint64_
     uint64_t rookBB = board.getPieceBB(color == WHITE ? W_ROOK : B_ROOK);
     while (rookBB) {
         int sq = getLS1B(rookBB);
-        uint64_t attacks = GenerateMoves::getRookMagicBB(sq, occupancy); 
+        uint64_t attacks = GenerateMoves::getRookMagicBB(sq, occupancy);
+
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
+        mgMobility += rookMgMobility[count];
+        egMobility += rookEgMobility[count];
 
-        mgScore += rookMgMobility[count];
-        egScore += rookEgMobility[count];
+        kingDanger += 3 * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
 
         popBit(rookBB, sq);
     }
@@ -503,12 +521,15 @@ int EngineEval::mobilityEval(const Board& board, int phase, Color color, uint64_
     uint64_t bishopBB = board.getPieceBB(color == WHITE ? W_BISHOP : B_BISHOP);
     while (bishopBB) {
         int sq = getLS1B(bishopBB);
-        uint64_t attacks = GenerateMoves::getBishopMagicBB(sq, occupancy); 
+        uint64_t attacks = GenerateMoves::getBishopMagicBB(sq, occupancy);
+        minorAttacks |= attacks;
+
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
+        mgMobility += bishopMgMobility[count];
+        egMobility += bishopEgMobility[count];
 
-        mgScore += bishopMgMobility[count];
-        egScore += bishopEgMobility[count];
+        kingDanger += 2 * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
 
         popBit(bishopBB, sq);
     }
@@ -516,24 +537,24 @@ int EngineEval::mobilityEval(const Board& board, int phase, Color color, uint64_
     uint64_t queenBB = board.getPieceBB(color == WHITE ? W_QUEEN : B_QUEEN);
     while (queenBB) {
         int sq = getLS1B(queenBB);
-        
-        uint64_t queenAttacks = GenerateMoves::getRookMagicBB(sq, occupancy) | 
-                                GenerateMoves::getBishopMagicBB(sq, occupancy);
-        
-        uint64_t freeMoves = queenAttacks & ~friends & ~enemyPawnAttacks;
+
+        uint64_t attacks = GenerateMoves::getRookMagicBB(sq, occupancy) |
+                            GenerateMoves::getBishopMagicBB(sq, occupancy);
+
+        uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
 
-        if ((color == WHITE && sq > 7) || (color==BLACK && sq<56)) { 
-            if (count == 0)      { mgScore -= 150; egScore -= 100; } 
-            else if (count <= 2) { mgScore -= 80;  egScore -= 40;  }  
+        if ((color == WHITE && sq > 7) || (color==BLACK && sq<56)) {
+            if (count == 0)      { mgMobility -= 150; egMobility -= 100; }
+            else if (count <= 2) { mgMobility -= 80;  egMobility -= 40;  }
         }
-        
+
+        kingDanger += 5 * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
+
         popBit(queenBB, sq);
     }
 
-    int finalScore = (((256 - phase) * mgScore) + (egScore * phase)) / 256;
-
-    return finalScore;
+    return minorAttacks;
 }
 
 int EngineEval::checkTrappedPatterns(const Board& board, int phase, Color color) {
@@ -663,83 +684,12 @@ int EngineEval::checkPinnedPieces(const Board& board, int phase) {
     return (((256 - phase) * mgPenalty) + (phase * egPenalty)) / 256;
 }
 
-int EngineEval::kingSafetyEval(const Board& board, int phase) {
-    int dangerToWhite = 0; 
-    int dangerToBlack = 0; 
-    
-    uint64_t blacks = board.getOccupancy(BLACK);
-    uint64_t whites = board.getOccupancy(WHITE);
-    uint64_t occupancy = board.getOccupancy(BOTH);
-    
-    uint64_t wKingZone = kingNearSq[0][board.getKingSquare(WHITE)];
-    uint64_t bKingZone = kingNearSq[1][board.getKingSquare(BLACK)];
-    
-    uint64_t wRooks = board.getPieceBB(W_ROOK);
-    uint64_t wBishops = board.getPieceBB(W_BISHOP);
-    uint64_t wQueens = board.getPieceBB(W_QUEEN);
-    uint64_t wKnights = board.getPieceBB(W_KNIGHT);
-    
-    while (wRooks) {
-        int sq = getLS1B(wRooks);
-        uint64_t attacks = GenerateMoves::getRookMagicBB(sq, occupancy) & ~whites;
-        dangerToBlack += 3 * (int) __builtin_popcountll(attacks & bKingZone);
-        popBit(wRooks, sq);
-    }
-    while (wBishops) {
-        int sq = getLS1B(wBishops);
-        uint64_t attacks = GenerateMoves::getBishopMagicBB(sq, occupancy) & ~whites;
-        dangerToBlack += 2 * (int) __builtin_popcountll(attacks & bKingZone);
-        popBit(wBishops, sq);
-    }
-    while (wQueens) {
-        int sq = getLS1B(wQueens);
-        uint64_t attacks = (GenerateMoves::getRookMagicBB(sq, occupancy) | 
-        GenerateMoves::getBishopMagicBB(sq, occupancy)) & ~whites;
-        dangerToBlack += 5 * (int) __builtin_popcountll(attacks & bKingZone);
-        popBit(wQueens, sq);
-    }
-    while (wKnights) {
-        int sq = getLS1B(wKnights);
-        uint64_t attacks = GenerateMoves::getKnightMoves(sq) & ~whites;
-        dangerToBlack += 2 * (int) __builtin_popcountll(attacks & bKingZone);
-        popBit(wKnights, sq);
-    }
-    
-    uint64_t bRooks = board.getPieceBB(B_ROOK);
-    uint64_t bBishops = board.getPieceBB(B_BISHOP);
-    uint64_t bQueens = board.getPieceBB(B_QUEEN);
-    uint64_t bKnights = board.getPieceBB(B_KNIGHT);
-    
-    while (bRooks) {
-        int sq = getLS1B(bRooks);
-        uint64_t attacks = GenerateMoves::getRookMagicBB(sq, occupancy) & ~blacks;
-        dangerToWhite += 3 * (int) __builtin_popcountll(attacks & wKingZone);
-        popBit(bRooks, sq);
-    }
-    while (bBishops) {
-        int sq = getLS1B(bBishops);
-        uint64_t attacks = GenerateMoves::getBishopMagicBB(sq, occupancy) & ~blacks;
-        dangerToWhite += 2 * (int) __builtin_popcountll(attacks & wKingZone);
-        popBit(bBishops, sq);
-    }
-    while (bQueens) {
-        int sq = getLS1B(bQueens);
-        uint64_t attacks = (GenerateMoves::getRookMagicBB(sq, occupancy) | 
-        GenerateMoves::getBishopMagicBB(sq, occupancy)) & ~blacks;
-        dangerToWhite += 5 * (int) __builtin_popcountll(attacks & wKingZone);
-        popBit(bQueens, sq);
-    }
-    while (bKnights) {
-        int sq = getLS1B(bKnights);
-        uint64_t attacks = GenerateMoves::getKnightMoves(sq) & ~blacks;
-        dangerToWhite += 2 * (int) __builtin_popcountll(attacks & wKingZone);
-        popBit(bKnights, sq);
-    }
-    
-    int overallScore = SafetyTable[dangerToBlack] - SafetyTable[dangerToWhite];
-    
-    
-    return (overallScore * (256 - phase)) / 256; 
+int EngineEval::kingSafetyEval(int phase, int dangerToBlack, int dangerToWhite) {
+    int blackDanger = std::min(dangerToBlack,99);
+    int whiteDanger = std::min(dangerToWhite,99);
+    int overallScore = SafetyTable[blackDanger] - SafetyTable[whiteDanger];
+
+    return (overallScore * (256 - phase)) / 256;
 }
 
 int EngineEval::underDevelopmentPenalty(const Board& board, int phase){
@@ -768,71 +718,41 @@ int EngineEval::underDevelopmentPenalty(const Board& board, int phase){
     return ((256-phase)*mgScore)/256;
 }
 
-int EngineEval::threatEval(const Board& board, int phase, uint64_t whitePawnAttacks, uint64_t blackPawnAttacks){
+int EngineEval::threatEval(const Board& board, int phase, uint64_t whitePawnAttacks, uint64_t blackPawnAttacks, uint64_t whiteMinorAttacks, uint64_t blackMinorAttacks){
     int mgScore = 0;
-    int egScore = 0; 
+    int egScore = 0;
     uint64_t wQueen  = board.getPieceBB(W_QUEEN);
     uint64_t wRooks  = board.getPieceBB(W_ROOK);
     uint64_t wMinors = board.getPieceBB(W_KNIGHT) | board.getPieceBB(W_BISHOP);
-    
+
     uint64_t bQueen  = board.getPieceBB(B_QUEEN);
     uint64_t bRooks  = board.getPieceBB(B_ROOK);
     uint64_t bMinors = board.getPieceBB(B_KNIGHT) | board.getPieceBB(B_BISHOP);
-    
+
     int wPawnThreatsQ = (int) __builtin_popcountll(whitePawnAttacks & bQueen);
     int wPawnThreatsR = (int) __builtin_popcountll(whitePawnAttacks & bRooks);
     int wPawnThreatsM = (int) __builtin_popcountll(whitePawnAttacks & bMinors);
-    
+
     mgScore += (wPawnThreatsQ * 50) + (wPawnThreatsR * 30) + (wPawnThreatsM * 15);
     egScore += (wPawnThreatsQ * 40) + (wPawnThreatsR * 25) + (wPawnThreatsM * 15);
-    
+
     int bPawnThreatsQ = (int) __builtin_popcountll(blackPawnAttacks & wQueen);
     int bPawnThreatsR = (int) __builtin_popcountll(blackPawnAttacks & wRooks);
     int bPawnThreatsM = (int) __builtin_popcountll(blackPawnAttacks & wMinors);
-    
+
     mgScore -= (bPawnThreatsQ * 50) + (bPawnThreatsR * 30) + (bPawnThreatsM * 15);
     egScore -= (bPawnThreatsQ * 40) + (bPawnThreatsR * 25) + (bPawnThreatsM * 15);
-    
-    uint64_t occ = board.getOccupancy(BOTH);
-    
-    uint64_t wMinorAttacks = 0;
-    uint64_t tempWKnights = board.getPieceBB(W_KNIGHT);
-    while (tempWKnights) {
-        int sq = getLS1B(tempWKnights);
-        wMinorAttacks |= GenerateMoves::getKnightMoves(sq); 
-        popBit(tempWKnights, sq);
-    }
-    uint64_t tempWBishops = board.getPieceBB(W_BISHOP);
-    while (tempWBishops) {
-        int sq = getLS1B(tempWBishops);
-        wMinorAttacks |= GenerateMoves::getBishopMagicBB(sq, occ); 
-        popBit(tempWBishops, sq);
-    }
-    
-    int wMinorThreatsQ = (int) __builtin_popcountll(wMinorAttacks & bQueen);
-    int wMinorThreatsR = (int) __builtin_popcountll(wMinorAttacks & bRooks);
+
+    int wMinorThreatsQ = (int) __builtin_popcountll(whiteMinorAttacks & bQueen);
+    int wMinorThreatsR = (int) __builtin_popcountll(whiteMinorAttacks & bRooks);
     mgScore += (wMinorThreatsQ * 35) + (wMinorThreatsR * 15);
     egScore += (wMinorThreatsQ * 25) + (wMinorThreatsR * 10);
-    
-    uint64_t bMinorAttacks = 0;
-    uint64_t tempBKnights = board.getPieceBB(B_KNIGHT);
-    while (tempBKnights) {
-        int sq = getLS1B(tempBKnights);
-        bMinorAttacks |= GenerateMoves::getKnightMoves(sq); 
-        popBit(tempBKnights, sq);
-    }
-    uint64_t tempBBishops = board.getPieceBB(B_BISHOP);
-    while (tempBBishops) {
-        int sq = getLS1B(tempBBishops);
-        bMinorAttacks |= GenerateMoves::getBishopMagicBB(sq, occ); 
-        popBit(tempBBishops, sq);
-    }
-    
-    int bMinorThreatsQ = (int) __builtin_popcountll(bMinorAttacks & wQueen);
-    int bMinorThreatsR = (int) __builtin_popcountll(bMinorAttacks & wRooks);
+
+    int bMinorThreatsQ = (int) __builtin_popcountll(blackMinorAttacks & wQueen);
+    int bMinorThreatsR = (int) __builtin_popcountll(blackMinorAttacks & wRooks);
     mgScore -= (bMinorThreatsQ * 35) + (bMinorThreatsR * 15);
     egScore -= (bMinorThreatsQ * 25) + (bMinorThreatsR * 10);
-    
+
     return (((256 - phase) * mgScore) + (phase * egScore)) / 256;
 }
 
