@@ -78,7 +78,9 @@ void Board::setupStartingBoard(){
     sideToMove = WHITE;
     initZobristKey();
     initPawnKey();
-    historyCount =0;
+    // The initial position counts for repetition as well.
+    historyCount = 0;
+    historyStack[historyCount++] = zobristKey;
     movesWithoutHalf = 0;
     castleHappened = 0b0000;
 }
@@ -190,7 +192,9 @@ void Board::parseFEN(const std::string& fen) {
     updateOccupancy();
     initZobristKey();
     initPawnKey();
+    // The initial position counts for repetition as well.
     historyCount = 0;
+    historyStack[historyCount++] = zobristKey;
     movesWithoutHalf = 0;
 }
 
@@ -527,9 +531,6 @@ void Board::unmakeMove(Move move){
     if(isKingMoved) {updateKingSquares(sideToMove,fromSq);}
     if(historyCount>0) historyCount--;
     updateOccupancy();
-    uint64_t key = calculateZobristFromScratch();
-    //if(zobristKey == key) std::cout<<"IT IS FINE" <<std::endl;
-    //else std::cout<<"Something is wrong. KEY CALC: "<<zobristKey<<" KEY SCRATCH: "<<key <<std::endl; 
 }
 
 uint64_t Board::Perft(int depth, GenerateMoves& gen)
@@ -612,16 +613,15 @@ uint64_t Board::calculateZobristFromScratch() {
     return newKey;
 }
 
+// True if the current position already occurred since the last irreversible move.
+// The search treats the first repetition as a draw: waiting for the third occurrence
+// lets a winning side walk into a threefold it cannot see until it is too late.
 bool Board::isRepetition() {
-    if (historyCount < 4) return false;
-    int limit = std::max(0, historyCount-movesWithoutHalf);
-    int repetitionCount = 1;
+    // historyStack[historyCount - 1] is the current position; the position right after
+    // the last capture/pawn move sits at historyCount - 1 - movesWithoutHalf and can repeat too.
+    int limit = std::max(0, historyCount - 1 - movesWithoutHalf);
     for (int i = historyCount - 3; i >= limit; i -= 2) {
-        if (historyStack[i] == zobristKey) {
-            repetitionCount++;
-            if(repetitionCount == 3) return true;
-            
-        }
+        if (historyStack[i] == zobristKey) return true;
     }
     return false;
 }
@@ -652,7 +652,8 @@ void Board::makeNullMove() {
     sideToMove = (sideToMove == WHITE) ? BLACK : WHITE;
 
     historyStack[historyCount++] = zobristKey;
-    movesWithoutHalf++; 
+    // Repetition detection must not look past a null move (restored in unmakeNullMove).
+    movesWithoutHalf = 0;
 }
 
 void Board::unmakeNullMove() {
@@ -677,7 +678,7 @@ bool Board::SEECalculation(const Board& board, int sq, Color attackerColor) {
     uint64_t currOccupancy = board.getOccupancy(BOTH);
 
     int targetPiece = getPieceType(sq);
-    gain[0] = PIECE_VALUES[targetPiece];
+    gain[0] = (targetPiece >= 0) ? PIECE_VALUES[targetPiece] : 0;
     
     Color sideToMove = attackerColor;
 

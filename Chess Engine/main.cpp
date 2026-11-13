@@ -129,12 +129,14 @@ int main() {
             break;
         }
         else if(command == "eval"){
+            Color originalSide = board.sideToMove;
             board.sideToMove = WHITE;
             int sWhite = eval.evaluate(board);
             std::cout<<"WHITE PERSPECTIVE: "<<sWhite<<std::endl;
             board.sideToMove = BLACK;
             int sBlack = eval.evaluate(board);
             std::cout<<"BLACK PERSPECTIVE: "<<sBlack<<std::endl;
+            board.sideToMove = originalSide;
         }
         else if (command == "perft"){   
             int depth = 1;

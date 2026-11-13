@@ -79,7 +79,7 @@ int EngineEval::evaluate(const Board& board){
 
     score+=evaluatePieceSquareTable(board,phase);
 
-    if(phase >150){
+    if(phase >150 && materialDiff != 0){
         Color winner = (materialDiff > 0) ? WHITE : BLACK;
         int mopUp=mopUpEval(board, winner, phase, bishopKnightEndgame);
         score += mopUp;
