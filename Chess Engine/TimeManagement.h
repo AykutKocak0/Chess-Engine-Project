@@ -10,6 +10,8 @@ private:
 
 public:
     void startTimer(int timeLeft, int increment, int movesToGo, int phase);
+    // Fixed time per move ("go movetime N").
+    void startFixed(int moveTimeMs);
     bool isTimeUp();
     int getElapsedTimeMs();
     int getAllocatedTimeMs(){return allocatedTimeMs;}

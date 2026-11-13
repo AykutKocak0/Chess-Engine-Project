@@ -69,66 +69,63 @@ int main() {
     GenerateMoves gen;
     EngineEval eval;
 
+    // The search runs on its own thread (see Search::startAsync), so this loop keeps
+    // reading commands while it thinks and "stop" / "isready" are answered at once.
     while (std::getline(std::cin, line)) {
         std::stringstream ss(line);
+        command.clear();   // an empty line must not repeat the previous command
         ss >> command;
 
         if (command == "uci") {
-            std::cout << "id name Botkut" << std::endl;
-            std::cout << "id author Aykut" << std::endl;
-            std::cout << "uciok" << std::endl;
+            uciPrint("id name Botkut");
+            uciPrint("id author Aykut");
+            uciPrint("uciok");
         }
         else if (command == "ucinewgame") {
+            search.stopAndWait();   // the search thread uses both tables
             TT.clear();
             PTT.clear();
         }
         else if (command == "isready") {
-            std::cout << "readyok" << std::endl;
+            uciPrint("readyok");
         }
         else if (command == "position") {
+            // Safe during a search: the search thread works on its own copy of the board.
             handlePosition(board, ss, search);
-        } 
+        }
         else if (command == "go") {
-            int depth = 64;
+            SearchLimits limits;
             std::string subCommand;
             int whiteTime = 0;
             int blackTime = 0;
-            int movesToGo = 0;
             int whiteIncrement = 0;
             int blackIncrement = 0;
-        
-            while (ss >> subCommand) {
-                if (subCommand == "depth") {
-                    ss >> depth;
-                }
-                if(subCommand == "wtime") {
-                    ss >> whiteTime;
-                }
-                if(subCommand == "btime") {
-                    ss >> blackTime;
-                }
-                if(subCommand == "winc") {
-                    ss >> whiteIncrement;
-                }
-                if(subCommand == "binc") {
-                    ss >> blackIncrement;
-                }
-                if(subCommand == "movestogo") {
-                    ss >> movesToGo;
-                }
 
+            while (ss >> subCommand) {
+                if (subCommand == "depth") ss >> limits.depth;
+                else if (subCommand == "wtime") ss >> whiteTime;
+                else if (subCommand == "btime") ss >> blackTime;
+                else if (subCommand == "winc") ss >> whiteIncrement;
+                else if (subCommand == "binc") ss >> blackIncrement;
+                else if (subCommand == "movestogo") ss >> limits.movesToGo;
+                else if (subCommand == "movetime") ss >> limits.moveTime;
+                else if (subCommand == "infinite") limits.infinite = true;
             }
-            int timeLeft = (board.sideToMove == WHITE) ? whiteTime : blackTime;
-            int increment = (board.sideToMove == WHITE) ? whiteIncrement : blackIncrement;
-            search.startSearch(board, depth, timeLeft, increment, movesToGo); 
+            if (limits.depth < 1) limits.depth = 1;
+            if (limits.depth > 64) limits.depth = 64;
+            limits.timeLeft = (board.sideToMove == WHITE) ? whiteTime : blackTime;
+            limits.increment = (board.sideToMove == WHITE) ? whiteIncrement : blackIncrement;
+            search.startAsync(board, limits);
         }
         else if (command == "stop") {
-            search.stop();
+            search.stopAndWait();
         }
         else if (command == "quit") {
+            search.stopAndWait();
             break;
         }
         else if(command == "eval"){
+            search.stopAndWait();   // evaluation uses the shared pawn hash table
             Color originalSide = board.sideToMove;
             board.sideToMove = WHITE;
             int sWhite = eval.evaluate(board);
@@ -138,7 +135,8 @@ int main() {
             std::cout<<"BLACK PERSPECTIVE: "<<sBlack<<std::endl;
             board.sideToMove = originalSide;
         }
-        else if (command == "perft"){   
+        else if (command == "perft"){
+            search.stopAndWait();   // don't share the CPU with a running search
             int depth = 1;
             if (ss >> depth) { /* gets depth from 'perft 5' */ }
             auto start = std::chrono::high_resolution_clock::now();
@@ -160,12 +158,12 @@ int main() {
             
             Move move = parseMove(board,moveStr,search); 
             
-            if (board.isLegalMove(move)) {
-                std::cout << "check_result legal" << std::endl;
-            } else {
-                std::cout << "check_result illegal" << std::endl;
-            }
+            uciPrint(board.isLegalMove(move) ? "check_result legal" : "check_result illegal");
         }
     }
+    // End of input: let a bounded search (depth/time) finish so piped commands such as
+    // "go depth 10" still produce their result; an infinite search could never end.
+    if (search.isInfinite()) search.stopAndWait();
+    else search.waitForFinish();
     return 0;
 }

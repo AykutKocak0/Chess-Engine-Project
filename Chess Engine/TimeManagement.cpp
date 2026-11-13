@@ -18,6 +18,12 @@ void TimeManagement::startTimer(int timeLeft, int increment, int movesToGo, int 
     if (allocatedTimeMs < 0) allocatedTimeMs = 10; 
 }
 
+void TimeManagement::startFixed(int moveTimeMs) {
+    startTime = std::chrono::high_resolution_clock::now();
+    // Small safety margin for output and GUI overhead.
+    allocatedTimeMs = moveTimeMs > 40 ? moveTimeMs - 20 : moveTimeMs / 2 + 1;
+}
+
 bool TimeManagement::isTimeUp() {
     return getElapsedTimeMs() >= allocatedTimeMs;
 }

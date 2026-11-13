@@ -105,6 +105,9 @@ Desteklenen komutlar:
 | `position fen <FEN> [moves ...]` | FEN'den pozisyon kurar |
 | `go depth N` | Belirtilen derinliğe kadar arar |
 | `go wtime/btime/winc/binc/movestogo` | Süreye göre arar |
+| `go movetime N` | Hamle başına sabit N ms arar |
+| `go infinite` | `stop` gelene kadar arar |
+| `stop` | Aramayı durdurur, motor `bestmove` ile cevap verir |
 | `perft N` | N derinliğinde perft çalıştırır, düğüm sayısını ve hızı yazar |
 | `eval` | Mevcut pozisyonun statik değerlendirmesini iki taraf için yazar |
 | `checklegal <hamle>` | Hamlenin legal olup olmadığını yazar (görselleştirici kullanır) |
@@ -118,9 +121,8 @@ go depth 10
 
 ## Bilinen Sınırlamalar
 
-- Arama ana thread'de çalışır. Bu yüzden arama sırasında `stop` komutu okunmaz ve `go infinite` sonlanmaz.
-- `go movetime` ve `setoption` (örneğin Hash boyutu) desteklenmiyor.
-- Mat skorları `score mate N` yerine `score cp` ile çok büyük bir değer olarak yazılır. `info` satırında PV yalnızca ilk hamleyi içerir.
+- `setoption` (örneğin Hash boyutu) ve ponder desteklenmiyor.
+- PV, transposition table'dan sonuç alınan düğümlerde kısa kalabilir.
 
 ## Doğrulama
 

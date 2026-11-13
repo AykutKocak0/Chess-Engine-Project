@@ -13,21 +13,54 @@
 #include <math.h>
 #include "Constants.h"
 #include "TimeManagement.h"
+#include <mutex>
+#include <sstream>
 
 using namespace Constants;
 
+static std::mutex uciOutputMutex;
 
-Move bestMoveFound;
+void uciPrint(const std::string& line) {
+    std::lock_guard<std::mutex> lock(uciOutputMutex);
+    std::cout << line << std::endl;
+}
 
-void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment, int movesToGo) {
-    nodes = 0; 
-    startTime = std::chrono::high_resolution_clock::now();
+void Search::startAsync(const Board& board, const SearchLimits& limits) {
+    stopAndWait();
+    // Reset before the thread starts, so a "stop" that arrives right after "go" is not lost.
     stopped = false;
-    int alpha = -1000000;
-    int beta = 1000000;
+    infinite = limits.infinite;
+    // The thread gets its own (non-const) copy of the board to make moves on.
+    worker = std::thread([this, boardCopy = Board(board), limits]() mutable {
+        startSearch(boardCopy, limits);
+    });
+}
+
+void Search::stopAndWait() {
+    stopped = true;
+    if (worker.joinable()) worker.join();
+}
+
+void Search::waitForFinish() {
+    if (worker.joinable()) worker.join();
+}
+
+void Search::startSearch(Board& board, const SearchLimits& limits) {
+    const int maxDepth = limits.depth;
+    nodes = 0;
+    startTime = std::chrono::high_resolution_clock::now();
     int phase = board.getPhase();
-    bool isTimeLeft = (timeLeft > 0);
-    if(isTimeLeft) timeManager.startTimer(timeLeft,increment,movesToGo,phase);
+    // "go infinite" ignores any clock values; "movetime" wins over the clock.
+    bool isTimeLeft = !limits.infinite && (limits.moveTime > 0 || limits.timeLeft > 0);
+    if (isTimeLeft) {
+        if (limits.moveTime > 0) timeManager.startFixed(limits.moveTime);
+        else timeManager.startTimer(limits.timeLeft, limits.increment, limits.movesToGo, phase);
+    }
+    // UCI: in infinite mode bestmove may only be sent after "stop".
+    auto printBestMove = [this](const std::string& move) {
+        while (infinite && !stopped) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        uciPrint("bestmove " + move);
+    };
 
     memset(historyTable, 0, sizeof(historyTable));
     for (int i = 0; i < MAX_PLY; i++) {
@@ -59,7 +92,7 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
         }
     }
     if (moveCount == 0) {
-        std::cout << "bestmove 0000" << std::endl;
+        printBestMove("0000");
         return;
     }
     for (int i = 0; i < moveCount; i++) {
@@ -67,7 +100,10 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
     }
     // Fallback in case the search is stopped before depth 1 completes.
     bestMoveFound = rootMoveList[0];
-    int previousBestValue = 0; 
+    int previousBestValue = 0;
+    // Principal variation of the best root move in the current iteration.
+    Move rootPV[65];
+    int rootPVLength = 0;
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
         if(isTimeLeft){
             if(timeManager.isTimeUp()) break;
@@ -106,7 +142,7 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
 
             if (movesSearched == 0) {
                 score = -alphaBeta(board, -beta, -alpha, currentDepth - 1, 1, true);
-                if ((score <= alpha || score >= beta) && abs(score) < 90000) {
+                if ((score <= alpha || score >= beta) && abs(score) < MATE_SCORE) {
                 
                 alpha = -1000000;
                 beta  =  1000000;
@@ -140,13 +176,17 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
 
             if (stopped) break;
 
-            if (score > -90000 && score < 90000) {
+            if (score > -MATE_SCORE && score < MATE_SCORE) {
                 rootMoveList[i].score = score; 
             }
 
             if (score > bestValue) {
                 bestValue = score;
                 currentBestMove = rootMoveList[i];
+                // The child at ply 1 left its line in pvTable[1]; prepend the root move.
+                rootPV[0] = rootMoveList[i];
+                rootPVLength = 1;
+                for (int p = 1; p < pvLength[1]; p++) rootPV[rootPVLength++] = pvTable[1][p];
             }
             alpha = std::max(alpha, score);
         }
@@ -159,15 +199,18 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
             std::chrono::duration<double> elapsed = now - startTime;
             uint64_t nps = (elapsed.count() > 0.001) ? (uint64_t)(nodes / elapsed.count()) : 0;
 
-            std::cout << "info depth " << currentDepth 
-                    << " score cp " << bestValue 
-                    << " nodes " << nodes 
-                    << " nps " << nps 
-                    << " time " << (int)(elapsed.count() * 1000) 
-                    << " pv " << moveToString(bestMoveFound) << std::endl;
-            if (bestValue > 80000) { 
+            std::ostringstream info;
+            info << "info depth " << currentDepth
+                 << " score " << scoreToUci(bestValue)
+                 << " nodes " << nodes
+                 << " nps " << nps
+                 << " time " << (int)(elapsed.count() * 1000)
+                 << " pv";
+            for (int p = 0; p < rootPVLength; p++) info << " " << moveToString(rootPV[p]);
+            uciPrint(info.str());
+            if (bestValue > MATE_BOUND) { 
 
-                int mateDistance = 90000 - bestValue; 
+                int mateDistance = MATE_SCORE - bestValue; 
                 if (mateDistance <= currentDepth) {
                     break;
                 }
@@ -179,15 +222,19 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
 
     // Move-ordering quality: share of beta cutoffs that happened on the first move tried.
     double firstMoveRate = betaCutoffs ? (100.0 * firstMoveCutoffs / betaCutoffs) : 0.0;
-    std::cout << "info string cutoffs " << betaCutoffs
-              << " first-move " << firstMoveCutoffs
-              << " rate " << firstMoveRate << "%" << std::endl;
+    std::ostringstream stats;
+    stats << "info string cutoffs " << betaCutoffs
+          << " first-move " << firstMoveCutoffs
+          << " rate " << firstMoveRate << "%";
+    uciPrint(stats.str());
 
-    std::cout << "bestmove " << moveToString(bestMoveFound) << std::endl;
+    printBestMove(moveToString(bestMoveFound));
 }
 
 int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply, bool allowNull) {
     nodes++;
+    // Empty PV until a move raises alpha; must happen before any early return.
+    pvLength[ply] = ply;
     if (timed && (nodes & 2047) == 0) {
         if (timeManager.isTimeUp()) {
             stopped = true;
@@ -216,8 +263,8 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
         hashMove = entry->bestMove;
         hasHashMove = true;
         int ttScore = entry->score;
-        if (ttScore > 80000) ttScore -= ply;
-        else if (ttScore < -80000) ttScore += ply;
+        if (ttScore > MATE_BOUND) ttScore -= ply;
+        else if (ttScore < -MATE_BOUND) ttScore += ply;
         if (entry->depth >= depthLeft) {
                 if (entry->flag == HASH_EXACT) return ttScore;
                 if (entry->flag == HASH_ALPHA && ttScore <= alpha) return ttScore;
@@ -234,7 +281,7 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
         if (staticEval < alpha - margin) {
             int value = quiescence(board, alpha - 1, alpha, ply, 0);
             
-            if (value < alpha && std::abs(value) < 80000) {
+            if (value < alpha && std::abs(value) < MATE_BOUND) {
                 return value; 
             }
         }
@@ -327,8 +374,8 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
                 }
             }
             int storeScore = score;
-            if (storeScore > 80000) storeScore += ply;
-            else if (storeScore < -80000) storeScore -= ply;
+            if (storeScore > MATE_BOUND) storeScore += ply;
+            else if (storeScore < -MATE_BOUND) storeScore -= ply;
             
             TT.store(zobristKey, depthLeft, storeScore, HASH_BETA, moveList[i]);
             return score;
@@ -336,10 +383,14 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
         if (isQuiet && quietsTriedCount < 64) quietsTried[quietsTriedCount++] = moveList[i];
         if (score > alpha) {
             alpha = score;
+            // New best line: this move followed by the child's PV.
+            pvTable[ply][ply] = moveList[i];
+            for (int p = ply + 1; p < pvLength[ply + 1]; p++) pvTable[ply][p] = pvTable[ply + 1][p];
+            pvLength[ply] = pvLength[ply + 1];
         }
     }
     if(!moveMade){
-        if (board.isInCheck()) return -90000 + ply; 
+        if (board.isInCheck()) return -MATE_SCORE + ply; 
         
         return 0;
     }
@@ -348,8 +399,8 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
     else if (bestValue > originalAlpha) flag = HASH_EXACT;
 
     int storeScore = bestValue;
-    if (storeScore > 80000) storeScore += ply;
-    else if (storeScore < -80000) storeScore -= ply;
+    if (storeScore > MATE_BOUND) storeScore += ply;
+    else if (storeScore < -MATE_BOUND) storeScore -= ply;
 
     TT.store(zobristKey, depthLeft, storeScore, flag, bestMove);
 
@@ -416,7 +467,7 @@ int Search::quiescence(Board& board, int alpha, int beta, int ply, int qsDepth) 
     }
     
     if (inCheck && legalMovesSearched == 0) {
-        return -90000 + ply; 
+        return -MATE_SCORE + ply; 
     }
     return alpha;
 }
@@ -534,6 +585,19 @@ std::string Search::moveToString(Move move) {
     }
 
     return moveStr;
+}
+
+// UCI wants mate distance in moves, not plies: positive = we mate, negative = we get mated.
+std::string Search::scoreToUci(int score) {
+    if (score > MATE_BOUND) {
+        int plies = MATE_SCORE - score;           // 89999 -> mate in 1 ply
+        return "mate " + std::to_string((plies + 1) / 2);
+    }
+    if (score < -MATE_BOUND) {
+        int plies = MATE_SCORE + score;           // -89998 -> mated in 2 plies
+        return "mate -" + std::to_string(plies / 2);
+    }
+    return "cp " + std::to_string(score);
 }
 
 char Search::getPromotionChar(Move move) {
