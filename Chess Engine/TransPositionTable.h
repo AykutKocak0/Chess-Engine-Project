@@ -8,7 +8,8 @@ struct TTEntry {
     int score;     
     int depth;     
     Move bestMove;
-    uint8_t flag;   
+    uint8_t flag;
+    uint8_t age;
 };
 
 struct PawnEntry {
@@ -19,9 +20,10 @@ struct PawnEntry {
 
 class TranspositionTable {
 public:
-    TranspositionTable(size_t mbSize);
+    TranspositionTable(size_t mbSize, bool isPawnTable = false);
     void clear();
-    void store(uint64_t key, int score, int depth, HashFlag flag, Move bestMove);
+    void newSearch() { generation++; }
+    void store(uint64_t key, int depth, int score, HashFlag flag, Move bestMove);
     void store(uint64_t key, int mgScore, int egScore);
     TTEntry* probe(uint64_t key);
     PawnEntry* pawnProbe(uint64_t key);
@@ -30,6 +32,7 @@ private:
     std::vector<TTEntry> table;
     std::vector<PawnEntry> pawnTable;
     size_t numEntries;
+    uint8_t generation = 0;
 };
 extern TranspositionTable TT;
 extern TranspositionTable PTT;

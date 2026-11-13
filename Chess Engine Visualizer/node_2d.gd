@@ -443,7 +443,7 @@ func process_engine_line(line: String):
 
 	elif line.begins_with("bestmove"):
 		var parts = line.split(" ")
-		if parts.size() > 1 and parts[1] != "(none)":
+		if parts.size() > 1 and parts[1] != "(none)" and parts[1] != "0000":
 			if is_debug_sandbox_mode:
 				print("[Sandbox - Analiz]: Motorun bu konum için önerdiği hamle: ", parts[1])
 			else:

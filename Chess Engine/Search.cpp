@@ -6,6 +6,7 @@
 #include "Search.h"
 #include "GenerateMoves.h"
 #include <limits>
+#include <algorithm>
 #include <iostream>
 #include "TransPositionTable.h"
 #include <cassert>
@@ -32,18 +33,40 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
     for (int i = 0; i < MAX_PLY; i++) {
         killerMoves[i][0] = Move();
         killerMoves[i][1] = Move();
+        stackMoves[i] = Move();
+        stackPieces[i] = -1;
     }
+    for (int p = 0; p < 12; p++) {
+        for (int sq = 0; sq < 64; sq++) counterMoves[p][sq] = Move();
+    }
+    std::fill(contHist.begin(), contHist.end(), 0);
 
+    timed = isTimeLeft;
+    TT.newSearch();
+    betaCutoffs = 0;
+    firstMoveCutoffs = 0;
+
+    Move pseudoMoves[256];
+    int pseudoCount = gen.generateMoves(board, pseudoMoves);
+
+    // Keep only legal root moves so mate/stalemate is detected up front.
     Move rootMoveList[256];
-    int moveCount = gen.generateMoves(board, rootMoveList);
-    
-    for (int i = 0; i < moveCount; i++) { 
-        rootMoveList[i].score = scoreMove(board, rootMoveList[i], 0); 
-        
+    int moveCount = 0;
+    for (int i = 0; i < pseudoCount; i++) {
+        if (board.makeMove(pseudoMoves[i])) {
+            board.unmakeMove(pseudoMoves[i]);
+            rootMoveList[moveCount++] = pseudoMoves[i];
+        }
     }
-    if(moveCount== 0){
+    if (moveCount == 0) {
+        std::cout << "bestmove 0000" << std::endl;
         return;
     }
+    for (int i = 0; i < moveCount; i++) {
+        rootMoveList[i].score = scoreMove(board, rootMoveList[i], 0);
+    }
+    // Fallback in case the search is stopped before depth 1 completes.
+    bestMoveFound = rootMoveList[0];
     int previousBestValue = 0; 
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
         if(isTimeLeft){
@@ -69,7 +92,7 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
         if (hasRootHash) {
             for (int i = 0; i < moveCount; i++) {
                 if (rootMoveList[i] == bestMoveFound) {
-                    rootMoveList[i].score = 2000000; 
+                    rootMoveList[i].score = SCORE_HASH;
                     break; 
                 }
             }
@@ -77,6 +100,8 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
         int movesSearched = 0;
         for (int i = 0; i < moveCount; i++) {
             pickBestMove(rootMoveList, moveCount, i);
+            stackMoves[0] = rootMoveList[i];
+            stackPieces[0] = board.getPieceType(rootMoveList[i].from);
             if (!board.makeMove(rootMoveList[i])) continue;
 
             if (movesSearched == 0) {
@@ -152,16 +177,22 @@ void Search::startSearch(Board& board, int maxDepth, int timeLeft, int increment
         }
     }
 
+    // Move-ordering quality: share of beta cutoffs that happened on the first move tried.
+    double firstMoveRate = betaCutoffs ? (100.0 * firstMoveCutoffs / betaCutoffs) : 0.0;
+    std::cout << "info string cutoffs " << betaCutoffs
+              << " first-move " << firstMoveCutoffs
+              << " rate " << firstMoveRate << "%" << std::endl;
+
     std::cout << "bestmove " << moveToString(bestMoveFound) << std::endl;
 }
 
 int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply, bool allowNull) {
     nodes++;
-    if ((nodes & 2047) == 0) {
+    if (timed && (nodes & 2047) == 0) {
         if (timeManager.isTimeUp()) {
             stopped = true;
+        }
     }
-}
     if (ply > 0 && (board.isRepetition() || board.getMovesWH() >=100)) {
 
         return 0;
@@ -211,31 +242,41 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
 
     if(!wasChecked && !board.isZugzwang() && depthLeft >= 3 && allowNull){
         int nullReduction = 3;
+        stackPieces[ply] = -1;
         board.makeNullMove();
         int nullScore = -alphaBeta(board, -beta, -beta+1, depthLeft-1-nullReduction,ply+1, false);
         board.unmakeNullMove();
 
+        if (stopped) return 0;
         if(nullScore >= beta){
             return nullScore;
         }
     }
+    // Internal iterative reduction: without a hash move the ordering is weak,
+    // so search this node one ply shallower and let the TT fill in for next time.
+    if (!hasHashMove && depthLeft >= 4) depthLeft--;
+
     Move moveList[256];
     bool moveMade = false;
     int moveCount = gen.generateMoves(board, moveList);
     int bestValue = -1000000;
     for (int i = 0; i < moveCount; i++) {
-        if(hasHashMove && moveList[i].from == hashMove.from && moveList[i].to == hashMove.to){
-            moveList[i].score = 200000;
+        if(hasHashMove && moveList[i] == hashMove){
+            moveList[i].score = SCORE_HASH;
         }
         else{ moveList[i].score = scoreMove(board, moveList[i], ply); }
     }
     int score;
+    Move quietsTried[64];
+    int quietsTriedCount = 0;
     bool isEndGame = board.isEndGame();
     int movesSearched = 0;
     for (int i = 0; i < moveCount; ++i) { 
         pickBestMove(moveList, moveCount, i);
+        stackMoves[ply] = moveList[i];
+        stackPieces[ply] = board.getPieceType(moveList[i].from);
         if(!board.makeMove(moveList[i])) continue;
-        if (movesSearched == 0) {   
+        if (movesSearched == 0) {
             score = -alphaBeta(board, -beta, -alpha, depthLeft - 1, ply + 1, true);
         } else {
             bool isKiller = (moveList[i] == killerMoves[ply][0] || moveList[i] == killerMoves[ply][1]);
@@ -257,23 +298,34 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
         }
 
         board.unmakeMove(moveList[i]);
+        // An aborted search returns meaningless scores; never let them reach the TT.
+        if (stopped) return 0;
         moveMade = true;
         movesSearched++;
         if (score > bestValue) {
             bestMove = moveList[i];
             bestValue = score;
         }
+        bool isQuiet = !moveList[i].isCapture() && !moveList[i].isPromotion();
         if (score >= beta) {
-            if (!moveList[i].isCapture()  && !moveList[i].isPromotion()) {
-            if (moveList[i] != killerMoves[ply][0]) {
-                killerMoves[ply][1] = killerMoves[ply][0];
-                killerMoves[ply][0] = moveList[i];
+            betaCutoffs++;
+            if (movesSearched == 1) firstMoveCutoffs++;
+            if (isQuiet) {
+                if (moveList[i] != killerMoves[ply][0]) {
+                    killerMoves[ply][1] = killerMoves[ply][0];
+                    killerMoves[ply][0] = moveList[i];
+                }
+                int bonus = depthLeft * depthLeft;
+                if (bonus > 400) bonus = 400;
+                updateHistory(board, moveList[i], ply, bonus);
+                // Malus: quiets that were tried first and failed to cut off.
+                for (int q = 0; q < quietsTriedCount; q++) {
+                    updateHistory(board, quietsTried[q], ply, -bonus);
+                }
+                if (ply >= 1 && stackPieces[ply - 1] >= 0) {
+                    counterMoves[stackPieces[ply - 1]][stackMoves[ply - 1].to] = moveList[i];
+                }
             }
-            int bonus = depthLeft * depthLeft;
-            if (bonus > 400) bonus = 400; 
-            int currentHistory = historyTable[board.sideToMove][moveList[i].from][moveList[i].to];
-            historyTable[board.sideToMove][moveList[i].from][moveList[i].to] += bonus - (currentHistory * bonus / 10000); 
-        }
             int storeScore = score;
             if (storeScore > 80000) storeScore += ply;
             else if (storeScore < -80000) storeScore -= ply;
@@ -281,8 +333,9 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
             TT.store(zobristKey, depthLeft, storeScore, HASH_BETA, moveList[i]);
             return score;
         }
+        if (isQuiet && quietsTriedCount < 64) quietsTried[quietsTriedCount++] = moveList[i];
         if (score > alpha) {
-            alpha = score; 
+            alpha = score;
         }
     }
     if(!moveMade){
@@ -332,21 +385,25 @@ int Search::quiescence(Board& board, int alpha, int beta, int ply, int qsDepth) 
         if (inCheck) {
             moveList[i].score = scoreMove(board, moveList[i], ply);
         } else {
-            if (moveList[i].flag != MoveFlag::QUIET) { 
+            if (moveList[i].isCapture() || moveList[i].isCapturePromotion()) {
                 moveList[i].score = scoreCapture(board, moveList[i]);
             } else {
-                moveList[i].score = 50000; 
+                // Quiet checks go after every SEE-passing capture (those score >= 100).
+                moveList[i].score = 0;
             }
         }
     }
     for (int i = 0; i < moveCount; i++) {
         pickBestMove(moveList, moveCount, i);
-        bool checkMove = moveList[i].flag == MoveFlag::QUIET;
+        // SEE needs a piece on the target square: skip en passant and non-captures.
+        bool seeApplies = moveList[i].flag == MoveFlag::CAPTURE || moveList[i].isCapturePromotion();
 
-        if(!checkMove && !inCheck){
+        if(seeApplies && !inCheck){
             bool SEE = board.SEECalculation(board,moveList[i].to,board.sideToMove);
             if(!SEE) continue;
         }
+        stackMoves[ply] = moveList[i];
+        stackPieces[ply] = board.getPieceType(moveList[i].from);
         if (!board.makeMove(moveList[i])) continue;
         legalMovesSearched++;
 
@@ -364,7 +421,7 @@ int Search::quiescence(Board& board, int alpha, int beta, int ply, int qsDepth) 
     return alpha;
 }
 
-int Search::scoreCapture(Board& board, Move& move) {
+int Search::scoreCapture(Board& board, Move& move, bool* losing) {
     int pieceMoved = board.getPieceType(move.from);
     int pieceTaken = board.getPieceType(move.to);
 
@@ -372,41 +429,82 @@ int Search::scoreCapture(Board& board, Move& move) {
         pieceTaken = (board.sideToMove == WHITE) ? B_PAWN : W_PAWN;
     }
 
-    
+    if (losing) *losing = false;
     int score = (PIECE_VALUES[pieceTaken] * 10) - PIECE_VALUES[pieceMoved];
-    bool SEE = board.SEECalculation(board, move.to, board.sideToMove);
+    // En passant is pawn-for-pawn at worst and its target square is empty, so SEE does not apply.
+    if (move.flag == MoveFlag::EN_PASSANT) return score;
+    // A capture can only lose material when the attacker is worth more than the victim.
     if (PIECE_VALUES[pieceMoved] > PIECE_VALUES[pieceTaken]) {
-        if (!SEE) {
-            score -= 5000; 
+        if (!board.SEECalculation(board, move.to, board.sideToMove)) {
+            score -= 5000;
+            if (losing) *losing = true;
         }
     }
 
     return score;
 }
 
+// Ordering bands, highest first:
+//   hash move > good captures / queen promotions > killers > quiets (history)
+//   > losing captures > underpromotions
 int Search::scoreMove(Board& board, Move& move, int ply) {
-    
-
-    if (move.isCapture()) {
-        return 10000 + scoreCapture(board, move);
-    }
-    
-    
-    if (move.isPromotion()) {
-        return 9000; 
+    bool queenPromo = (move.flag == MoveFlag::PROMOTION_QUEEN || move.flag == MoveFlag::CPROMOTION_QUEEN);
+    if (move.isPromotion() && !queenPromo) {
+        return SCORE_UNDERPROMO;
     }
 
-    if (killerMoves[ply][0] == move) return 8000;
-    if (killerMoves[ply][1] == move) return 7000;
+    if (move.isCapture() || move.isCapturePromotion()) {
+        bool losing = false;
+        int captureScore = scoreCapture(board, move, &losing);
+        if (losing) return SCORE_BAD_CAPTURE + captureScore;
+        return SCORE_GOOD_CAPTURE + captureScore + (queenPromo ? 9000 : 0);
+    }
 
-    return historyTable[board.sideToMove][move.from][move.to]; 
+    if (queenPromo) {
+        return SCORE_GOOD_CAPTURE + 9000;
+    }
+
+    if (killerMoves[ply][0] == move) return SCORE_KILLER_1;
+    if (killerMoves[ply][1] == move) return SCORE_KILLER_2;
+
+    // Quiet move: butterfly history plus continuation history of the last two plies.
+    int piece = board.getPieceType(move.from);
+    int score = historyTable[board.sideToMove][move.from][move.to];
+    if (ply >= 1 && stackPieces[ply - 1] >= 0) {
+        int prevPiece = stackPieces[ply - 1];
+        int prevTo = stackMoves[ply - 1].to;
+        if (counterMoves[prevPiece][prevTo] == move) return SCORE_COUNTER;
+        score += contHistEntry(prevPiece, prevTo, piece, move.to);
+    }
+    if (ply >= 2 && stackPieces[ply - 2] >= 0) {
+        score += contHistEntry(stackPieces[ply - 2], stackMoves[ply - 2].to, piece, move.to);
+    }
+    return score;
+}
+
+// Updates butterfly and continuation history for a quiet move at this ply.
+// Gravity keeps each table within +/-HISTORY_MAX for both bonus and malus.
+// Must be called with the move unmade (board at the node's own position).
+void Search::updateHistory(const Board& board, const Move& move, int ply, int bonus) {
+    auto apply = [bonus](int& entry) {
+        entry += bonus - entry * std::abs(bonus) / HISTORY_MAX;
+    };
+    apply(historyTable[board.sideToMove][move.from][move.to]);
+
+    int piece = board.getPieceType(move.from);
+    for (int back = 1; back <= 2; back++) {
+        int p = ply - back;
+        if (p >= 0 && stackPieces[p] >= 0) {
+            apply(contHistEntry(stackPieces[p], stackMoves[p].to, piece, move.to));
+        }
+    }
 }
 
 void Search::pickBestMove(Move* moveList, int moveCount, int currentIndex) {
-    int bestScore = -100000;
+    int bestScore = moveList[currentIndex].score;
     int bestIndex = currentIndex;
 
-    for (int i = currentIndex; i < moveCount; i++) {
+    for (int i = currentIndex + 1; i < moveCount; i++) {
         if (moveList[i].score > bestScore) {
             bestScore = moveList[i].score;
             bestIndex = i;
