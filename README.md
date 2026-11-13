@@ -39,9 +39,10 @@ Chess-Engine-Project/
 │   ├── GenerateMoves.*        # Hamle üretimi, saldırı tabloları
 │   ├── Search.*               # Arama
 │   ├── EngineEval.*           # Değerlendirme
+│   ├── EvalParams.*           # Değerlendirme ağırlıkları (tuning için tek yerde)
 │   ├── TransPositionTable.*   # Hash tabloları
 │   ├── TimeManagement.*       # Zaman yönetimi
-│   ├── Constants.*            # PST'ler, Zobrist anahtarları, maskeler
+│   ├── Constants.*            # Zobrist anahtarları, maskeler, LMR tablosu
 │   ├── Magics.h               # Hazır magic sayıları
 │   ├── MagicCreator.c         # Magic sayılarını üreten ayrı araç (motora derlenmez)
 │   └── CMakeLists.txt

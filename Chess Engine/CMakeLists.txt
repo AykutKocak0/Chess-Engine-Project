@@ -11,6 +11,7 @@ add_executable(Botkut
     GenerateMoves.cpp 
     Constants.cpp
     EngineEval.cpp
+    EvalParams.cpp
     TransPositionTable.cpp
     TimeManagement.cpp
 )

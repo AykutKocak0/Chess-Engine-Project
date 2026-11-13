@@ -7,39 +7,20 @@
 #include <iostream>
 #include "GenerateMoves.h"
 #include "TransPositionTable.h"
+#include "EvalParams.h"
 using namespace Constants;
 
-const int mgPassedBonus[8] = { 0, 5, 10, 20, 40, 70, 100, 0 };
-const int egPassedBonus[8] = { 0, 10, 25, 50, 100, 160, 260, 0 };
-const int knightEgMobility[9]  = { -40, -30, -15,  -5,   5,  15,  25,  35,  40 };
-const int knightMgMobility[9]  = { -20, -15,  -8,  -2,   2,   8,  12,  16,  20 };
-
-const int bishopEgMobility[14] = { -40, -25, -15,  -5,   5,  15,  25,  35,  40,  45,  50,  50,  50,  50 };
-const int bishopMgMobility[14] = { -20, -12,  -8,  -2,   2,   8,  12,  18,  20,  22,  25,  25,  25,  25 };
-
-const int rookEgMobility[15]   = { -40, -25, -15, -10,  -5,   0,   5,  10,  15,  20,  25,  30,  35,  40,  40 };
-const int rookMgMobility[15]   = { -20, -12,  -8,  -5,  -2,   0,   2,   5,   8,  12,  15,  18,  20,  20,  20 };
 uint64_t FILE_H = 0x8080808080808080ULL;
 uint64_t FILE_A = 0x0101010101010101ULL;
 
-static const int SafetyTable[100] = {
-    0,  0,   1,   2,   3,   5,   7,   9,  12,  15,
-  18,  22,  26,  30,  35,  39,  44,  50,  56,  62,
-  68,  75,  82,  85,  89,  97, 105, 113, 122, 131,
- 140, 150, 169, 180, 191, 202, 213, 225, 237, 248,
- 260, 272, 283, 295, 307, 319, 330, 342, 354, 366,
- 377, 389, 401, 412, 424, 436, 448, 459, 471, 483,
- 494, 500, 500, 500, 500, 500, 500, 500, 500, 500,
- 500, 500, 500, 500, 500, 500, 500, 500, 500, 500,
- 500, 500, 500, 500, 500, 500, 500, 500, 500, 500,
- 500, 500, 500, 500, 500, 500, 500, 500, 500, 500
-};
+// Shorthand for the tunable weights (see EvalParams.h).
+static const EvalParams& P = evalParams;
 
 
 int EngineEval::evaluate(const Board& board){
     int score = 0;
-    if(board.sideToMove == WHITE) score+=20;
-    else score-=20;
+    if(board.sideToMove == WHITE) score+=P.tempo;
+    else score-=P.tempo;
     uint64_t whitePawnAttacks = enemyPawnAttacks(board, WHITE);
     uint64_t blackPawnAttacks = enemyPawnAttacks(board, BLACK);
     bool bishopKnightEndgame = false;
@@ -150,20 +131,22 @@ int EngineEval::evaluateMaterial(const Board& board, int phase) {
     int bR = (int)__builtin_popcountll(board.getPieceBB(B_ROOK));
     int bQ = (int)__builtin_popcountll(board.getPieceBB(B_QUEEN));
 
-    mgScore += (wP - bP) * VAL_PAWN_MG;
-    mgScore += (wN - bN) * VAL_KNIGHT_MG;
-    mgScore += (wB - bB) * VAL_BISHOP_MG;
-    mgScore += (wR - bR) * VAL_ROOK_MG;
-    mgScore += (wQ - bQ) * VAL_QUEEN_MG;
+    mgScore += (wP - bP) * P.material[0].mg;
+    mgScore += (wN - bN) * P.material[1].mg;
+    mgScore += (wB - bB) * P.material[2].mg;
+    mgScore += (wR - bR) * P.material[3].mg;
+    mgScore += (wQ - bQ) * P.material[4].mg;
 
-    egScore += (wP - bP) * VAL_PAWN_EG;
-    egScore += (wN - bN) * VAL_KNIGHT_EG;
-    egScore += (wB - bB) * VAL_BISHOP_EG;
-    egScore += (wR - bR) * VAL_ROOK_EG; 
-    egScore += (wQ - bQ) * VAL_QUEEN_EG;
+    egScore += (wP - bP) * P.material[0].eg;
+    egScore += (wN - bN) * P.material[1].eg;
+    egScore += (wB - bB) * P.material[2].eg;
+    egScore += (wR - bR) * P.material[3].eg; 
+    egScore += (wQ - bQ) * P.material[4].eg;
     return (((256-phase)*mgScore) + (egScore*phase)) / 256;
 }
 
+// Raw middlegame material balance. Uses the fixed VAL_* values on purpose: it only
+// decides which side the mop-up evaluation helps, and should not move with tuning.
 int EngineEval::pureEvaluateMaterial(const Board& board, int phase) {
     int mgScore = 0;
 
@@ -192,12 +175,12 @@ int EngineEval::bishopPair(const Board& board, int phase){
     int egBonus = 0;
 
     if (__builtin_popcountll(board.getPieceBB(W_BISHOP)) >= 2) {
-        mgBonus += 20;
-        egBonus += 50;
+        mgBonus += P.bishopPair.mg;
+        egBonus += P.bishopPair.eg;
     }
     if (__builtin_popcountll(board.getPieceBB(B_BISHOP)) >= 2) {
-        mgBonus -= 20;
-        egBonus -= 50;
+        mgBonus -= P.bishopPair.mg;
+        egBonus -= P.bishopPair.eg;
     }
 
     int finalBonus = ((mgBonus * (256 - phase)) + (egBonus * phase)) / 256;
@@ -218,20 +201,20 @@ int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t wh
     uint64_t whitePawns = board.getPieceBB(W_PAWN);
     uint64_t blackPawns = board.getPieceBB(B_PAWN);
 
-    if (whitePawns & (1ULL << e4)) { mgScore += 12; egScore += 5; }
-    if (whitePawns & (1ULL << d4)) { mgScore += 12; egScore += 5; }
-    if (blackPawns & (1ULL << e5)) { mgScore -= 12; egScore -= 5; }
-    if (blackPawns & (1ULL << d5)) { mgScore -= 12; egScore -= 5; }
+    if (whitePawns & (1ULL << e4)) { mgScore += P.centerPawn.mg; egScore += P.centerPawn.eg; }
+    if (whitePawns & (1ULL << d4)) { mgScore += P.centerPawn.mg; egScore += P.centerPawn.eg; }
+    if (blackPawns & (1ULL << e5)) { mgScore -= P.centerPawn.mg; egScore -= P.centerPawn.eg; }
+    if (blackPawns & (1ULL << d5)) { mgScore -= P.centerPawn.mg; egScore -= P.centerPawn.eg; }
 
-    if ((whitePawns & (1ULL << e4)) && (whitePawns & (1ULL << d4))) { mgScore += 12; egScore += 6; }
-    if ((blackPawns & (1ULL << e5)) && (blackPawns & (1ULL << d5))) { mgScore -= 12; egScore -= 6; }
+    if ((whitePawns & (1ULL << e4)) && (whitePawns & (1ULL << d4))) { mgScore += P.centerPawnDuo.mg; egScore += P.centerPawnDuo.eg; }
+    if ((blackPawns & (1ULL << e5)) && (blackPawns & (1ULL << d5))) { mgScore -= P.centerPawnDuo.mg; egScore -= P.centerPawnDuo.eg; }
 
     for (int i = 0; i < 8; i++) {
         uint64_t wPawnsOnFile = whitePawns & FileMasks[i];
         uint64_t bPawnsOnFile = blackPawns & FileMasks[i];
 
-        if (wPawnsOnFile & (wPawnsOnFile - 1)) { mgScore -= 10; egScore -= 20; }
-        if (bPawnsOnFile & (bPawnsOnFile - 1)) { mgScore += 10; egScore += 20; }
+        if (wPawnsOnFile & (wPawnsOnFile - 1)) { mgScore += P.doubledPawn.mg; egScore += P.doubledPawn.eg; }
+        if (bPawnsOnFile & (bPawnsOnFile - 1)) { mgScore -= P.doubledPawn.mg; egScore -= P.doubledPawn.eg; }
 
         uint64_t adj = 0;
         if (i > 0) adj |= FileMasks[i - 1];
@@ -246,17 +229,17 @@ int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t wh
             int rank = whiteSq / 8;
 
             if (wIsolated) {
-                mgScore -= 10;
-                egScore -= 20;
+                mgScore += P.isolatedPawn.mg;
+                egScore += P.isolatedPawn.eg;
             }
 
             if (!(blackPawns & PassedPawnMasks[WHITE][whiteSq])) {
-                mgScore += mgPassedBonus[rank];
-                egScore += egPassedBonus[rank];
+                mgScore += P.passedPawnMg[rank];
+                egScore += P.passedPawnEg[rank];
 
                 if (whitePawnAttacks & (1ULL << whiteSq)) {
-                    mgScore += 10;
-                    egScore += 25;
+                    mgScore += P.protectedPassedPawn.mg;
+                    egScore += P.protectedPassedPawn.eg;
                 }
             }
 
@@ -264,8 +247,8 @@ int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t wh
                               && !(blackPawns & (1ULL << (whiteSq + 8))))
             {
                 int nextRank = rank + 1;
-                mgScore += mgPassedBonus[nextRank] / 2;
-                egScore += egPassedBonus[nextRank] / 2;
+                mgScore += P.passedPawnMg[nextRank] / 2;
+                egScore += P.passedPawnEg[nextRank] / 2;
             }
 
             popBit(tempW, whiteSq);
@@ -278,17 +261,17 @@ int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t wh
 
             // İzole Piyon Cezası
             if (bIsolated) {
-                mgScore += 10;
-                egScore += 20;
+                mgScore -= P.isolatedPawn.mg;
+                egScore -= P.isolatedPawn.eg;
             }
 
             if (!(whitePawns & PassedPawnMasks[BLACK][blackSq])) {
-                mgScore -= mgPassedBonus[7 - rank];
-                egScore -= egPassedBonus[7 - rank];
+                mgScore -= P.passedPawnMg[7 - rank];
+                egScore -= P.passedPawnEg[7 - rank];
 
                 if (blackPawnAttacks & (1ULL << blackSq)) {
-                    mgScore -= 10;
-                    egScore -= 25;
+                    mgScore -= P.protectedPassedPawn.mg;
+                    egScore -= P.protectedPassedPawn.eg;
                 }
             }
             // Aday Geçmiş Piyon Kontrolü
@@ -296,8 +279,8 @@ int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t wh
                              && !(whitePawns & (1ULL << (blackSq - 8))))
             {
                 int nextRank = rank - 1;
-                mgScore -= mgPassedBonus[7 - nextRank] / 2;
-                egScore -= egPassedBonus[7 - nextRank] / 2;
+                mgScore -= P.passedPawnMg[7 - nextRank] / 2;
+                egScore -= P.passedPawnEg[7 - nextRank] / 2;
             }
 
             popBit(tempB, blackSq);
@@ -318,15 +301,15 @@ int EngineEval::evaluatePieceSquareTable(const Board& board, int phase){
         int pieceType = board.getPieceType(sq);
     
         if(pieceType <=5){
-            mgScore+=mgTables[pieceType][sq^56];
+            mgScore+=P.pstMg[pieceType][sq^56];
             
-            egScore+=egTables[pieceType][sq^56];
+            egScore+=P.pstEg[pieceType][sq^56];
             
         }
         else{
-            mgScore-=mgTables[pieceType-6][sq];
+            mgScore-=P.pstMg[pieceType-6][sq];
             
-            egScore-=egTables[pieceType-6][sq];
+            egScore-=P.pstEg[pieceType-6][sq];
         }
         count++;
         popBit(bbBoth,sq);
@@ -403,8 +386,8 @@ int EngineEval::kingPawnStructure(const Board& board, Color color, int phase) {
             uint64_t kingFileMask = FileMasks[kingFile];
             
             if (!(myPawns & kingFileMask)) {
-                mgScore -= 15;
-                if (!(enemyPawns & kingFileMask)) mgScore -= 10; 
+                mgScore += P.kingFileNoOwnPawn;
+                if (!(enemyPawns & kingFileMask)) mgScore += P.kingFileFullyOpen;
             }
             
             uint64_t adjMask = 0;
@@ -412,69 +395,69 @@ int EngineEval::kingPawnStructure(const Board& board, Color color, int phase) {
             if (kingFile < 7) adjMask |= FileMasks[kingFile + 1];
             
             if (!(myPawns & adjMask)) {
-                mgScore -= 10; 
+                mgScore += P.kingAdjFilesNoOwnPawn;
             }
         }
         else {
             uint64_t kingFileMask = FileMasks[kingFile];
             if (!(myPawns & kingFileMask) && !(enemyPawns & kingFileMask)) {
-                mgScore -= 30; 
+                mgScore += P.kingCenterOpenFile;
             }
         }
 
         if (color == WHITE) {
             if (kingFile >= 5) { 
-                if (board.getPieceType(f2) == W_PAWN) mgScore += 20;
-                else if (board.getPieceType(f3) == W_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(f2) == W_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(f3) == W_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
-                if (board.getPieceType(g2) == W_PAWN) mgScore += 20;
-                else if (board.getPieceType(g3) == W_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(g2) == W_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(g3) == W_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
-                if (board.getPieceType(h2) == W_PAWN) mgScore += 20;
-                else if (board.getPieceType(h3) == W_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(h2) == W_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(h3) == W_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
             } else if (kingFile <= 2) { 
-                if (board.getPieceType(a2) == W_PAWN) mgScore += 20;
-                else if (board.getPieceType(a3) == W_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(a2) == W_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(a3) == W_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
-                if (board.getPieceType(b2) == W_PAWN) mgScore += 20;
-                else if (board.getPieceType(b3) == W_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(b2) == W_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(b3) == W_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
-                if (board.getPieceType(c2) == W_PAWN) mgScore += 20;
-                else if (board.getPieceType(c3) == W_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(c2) == W_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(c3) == W_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
             }
         } else { 
             if (kingFile >= 5) { 
-                if (board.getPieceType(f7) == B_PAWN) mgScore += 20;
-                else if (board.getPieceType(f6) == B_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(f7) == B_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(f6) == B_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
-                if (board.getPieceType(g7) == B_PAWN) mgScore += 20;
-                else if (board.getPieceType(g6) == B_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(g7) == B_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(g6) == B_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
-                if (board.getPieceType(h7) == B_PAWN) mgScore += 20;
-                else if (board.getPieceType(h6) == B_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(h7) == B_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(h6) == B_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
             } else if (kingFile <= 2) { 
-                if (board.getPieceType(a7) == B_PAWN) mgScore += 20;
-                else if (board.getPieceType(a6) == B_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(a7) == B_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(a6) == B_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
-                if (board.getPieceType(b7) == B_PAWN) mgScore += 20;
-                else if (board.getPieceType(b6) == B_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(b7) == B_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(b6) == B_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
 
-                if (board.getPieceType(c7) == B_PAWN) mgScore += 20;
-                else if (board.getPieceType(c6) == B_PAWN) mgScore += 10;
-                else mgScore-=10;
+                if (board.getPieceType(c7) == B_PAWN) mgScore += P.shieldPawnUnmoved;
+                else if (board.getPieceType(c6) == B_PAWN) mgScore += P.shieldPawnAdvanced;
+                else mgScore += P.shieldPawnMissing;
             }
         }
     }
@@ -495,10 +478,10 @@ uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint
 
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
-        mgMobility += knightMgMobility[count];
-        egMobility += knightEgMobility[count];
+        mgMobility += P.knightMobilityMg[count];
+        egMobility += P.knightMobilityEg[count];
 
-        kingDanger += 2 * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
+        kingDanger += P.kingAttackKnight * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
 
         popBit(knightBB, sq);
     }
@@ -510,10 +493,10 @@ uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint
 
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
-        mgMobility += rookMgMobility[count];
-        egMobility += rookEgMobility[count];
+        mgMobility += P.rookMobilityMg[count];
+        egMobility += P.rookMobilityEg[count];
 
-        kingDanger += 3 * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
+        kingDanger += P.kingAttackRook * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
 
         popBit(rookBB, sq);
     }
@@ -526,10 +509,10 @@ uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint
 
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
-        mgMobility += bishopMgMobility[count];
-        egMobility += bishopEgMobility[count];
+        mgMobility += P.bishopMobilityMg[count];
+        egMobility += P.bishopMobilityEg[count];
 
-        kingDanger += 2 * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
+        kingDanger += P.kingAttackBishop * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
 
         popBit(bishopBB, sq);
     }
@@ -545,11 +528,11 @@ uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint
         int count = (int) __builtin_popcountll(freeMoves);
 
         if ((color == WHITE && sq > 7) || (color==BLACK && sq<56)) {
-            if (count == 0)      { mgMobility -= 150; egMobility -= 100; }
-            else if (count <= 2) { mgMobility -= 80;  egMobility -= 40;  }
+            if (count == 0)      { mgMobility += P.queenNoMoves.mg;  egMobility += P.queenNoMoves.eg; }
+            else if (count <= 2) { mgMobility += P.queenFewMoves.mg; egMobility += P.queenFewMoves.eg; }
         }
 
-        kingDanger += 5 * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
+        kingDanger += P.kingAttackQueen * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
 
         popBit(queenBB, sq);
     }
@@ -561,27 +544,27 @@ int EngineEval::checkTrappedPatterns(const Board& board, int phase, Color color)
     int penalty = 0;
 
     if (color == WHITE) {
-        if (board.getPieceType(a7) == W_BISHOP && board.getPieceType(b6) == B_PAWN) penalty += 80;
-        if (board.getPieceType(h7) == W_BISHOP && board.getPieceType(g6) == B_PAWN) penalty += 80;
+        if (board.getPieceType(a7) == W_BISHOP && board.getPieceType(b6) == B_PAWN) penalty -= P.trappedBishop7th;
+        if (board.getPieceType(h7) == W_BISHOP && board.getPieceType(g6) == B_PAWN) penalty -= P.trappedBishop7th;
         
-        if (board.getPieceType(a6) == W_BISHOP && board.getPieceType(b7) == B_PAWN) penalty += 50;
-        if (board.getPieceType(h6) == W_BISHOP && board.getPieceType(g7) == B_PAWN) penalty += 50;
+        if (board.getPieceType(a6) == W_BISHOP && board.getPieceType(b7) == B_PAWN) penalty -= P.trappedBishop6th;
+        if (board.getPieceType(h6) == W_BISHOP && board.getPieceType(g7) == B_PAWN) penalty -= P.trappedBishop6th;
 
-        if (board.getPieceType(a8) == W_KNIGHT) penalty += 40;
-        if (board.getPieceType(h8) == W_KNIGHT) penalty += 40;
+        if (board.getPieceType(a8) == W_KNIGHT) penalty -= P.knightInCorner;
+        if (board.getPieceType(h8) == W_KNIGHT) penalty -= P.knightInCorner;
         
-        if (board.getPieceType(a7) == W_KNIGHT && (board.getPieceType(b6) == B_PAWN || board.getPieceType(c6) == B_PAWN)) penalty += 30;
+        if (board.getPieceType(a7) == W_KNIGHT && (board.getPieceType(b6) == B_PAWN || board.getPieceType(c6) == B_PAWN)) penalty -= P.trappedKnight7th;
 
     } else {
-        if (board.getPieceType(a2) == B_BISHOP && board.getPieceType(b3) == W_PAWN) penalty += 80;
-        if (board.getPieceType(h2) == B_BISHOP && board.getPieceType(g3) == W_PAWN) penalty += 80;
+        if (board.getPieceType(a2) == B_BISHOP && board.getPieceType(b3) == W_PAWN) penalty -= P.trappedBishop7th;
+        if (board.getPieceType(h2) == B_BISHOP && board.getPieceType(g3) == W_PAWN) penalty -= P.trappedBishop7th;
         
-        if (board.getPieceType(a3) == B_BISHOP && board.getPieceType(b2) == W_PAWN) penalty += 50;
-        if (board.getPieceType(h3) == B_BISHOP && board.getPieceType(g2) == W_PAWN) penalty += 50;
-        if (board.getPieceType(a1) == B_KNIGHT) penalty += 40;
-        if (board.getPieceType(h1) == B_KNIGHT) penalty += 40;
+        if (board.getPieceType(a3) == B_BISHOP && board.getPieceType(b2) == W_PAWN) penalty -= P.trappedBishop6th;
+        if (board.getPieceType(h3) == B_BISHOP && board.getPieceType(g2) == W_PAWN) penalty -= P.trappedBishop6th;
+        if (board.getPieceType(a1) == B_KNIGHT) penalty -= P.knightInCorner;
+        if (board.getPieceType(h1) == B_KNIGHT) penalty -= P.knightInCorner;
         
-        if (board.getPieceType(a2) == B_KNIGHT && (board.getPieceType(b3) == W_PAWN || board.getPieceType(c3) == W_PAWN)) penalty += 30;
+        if (board.getPieceType(a2) == B_KNIGHT && (board.getPieceType(b3) == W_PAWN || board.getPieceType(c3) == W_PAWN)) penalty -= P.trappedKnight7th;
     }
 
     return (phase > 200) ? -penalty/2 : -penalty; 
@@ -621,8 +604,8 @@ int EngineEval::checkPinnedPieces(const Board& board, int phase) {
         uint64_t lineMask = (pinnerAttacks & wRAttacks) & boundingBoxMask;
         
         if(__builtin_popcountll(lineMask & whites) == 1) { 
-            mgPenalty -= 20;
-            egPenalty -= 42;
+            mgPenalty += P.pinnedPiece.mg;
+            egPenalty += P.pinnedPiece.eg;
         }        
     }
     
@@ -639,8 +622,8 @@ int EngineEval::checkPinnedPieces(const Board& board, int phase) {
         uint64_t lineMask = (pinnerAttacks & bRAttacks) & boundingBoxMask;
         
         if(__builtin_popcountll(lineMask & blacks) == 1) { 
-            mgPenalty += 20;
-            egPenalty += 42;
+            mgPenalty -= P.pinnedPiece.mg;
+            egPenalty -= P.pinnedPiece.eg;
         }        
     }
     
@@ -657,8 +640,8 @@ int EngineEval::checkPinnedPieces(const Board& board, int phase) {
         uint64_t lineMask = (pinnerAttacks & wBAttacks) & boundingBoxMask;
         
         if(__builtin_popcountll(lineMask & whites) == 1) { 
-            mgPenalty -= 20;
-            egPenalty -= 42;
+            mgPenalty += P.pinnedPiece.mg;
+            egPenalty += P.pinnedPiece.eg;
         }        
     }
     
@@ -675,8 +658,8 @@ int EngineEval::checkPinnedPieces(const Board& board, int phase) {
         uint64_t lineMask = (pinnerAttacks & bBAttacks) & boundingBoxMask;
         
         if(__builtin_popcountll(lineMask & blacks) == 1) { 
-            mgPenalty += 20;
-            egPenalty += 42;
+            mgPenalty -= P.pinnedPiece.mg;
+            egPenalty -= P.pinnedPiece.eg;
         }        
     }
     
@@ -687,7 +670,7 @@ int EngineEval::checkPinnedPieces(const Board& board, int phase) {
 int EngineEval::kingSafetyEval(int phase, int dangerToBlack, int dangerToWhite) {
     int blackDanger = std::min(dangerToBlack,99);
     int whiteDanger = std::min(dangerToWhite,99);
-    int overallScore = SafetyTable[blackDanger] - SafetyTable[whiteDanger];
+    int overallScore = P.kingSafetyTable[blackDanger] - P.kingSafetyTable[whiteDanger];
 
     return (overallScore * (256 - phase)) / 256;
 }
@@ -733,25 +716,25 @@ int EngineEval::threatEval(const Board& board, int phase, uint64_t whitePawnAtta
     int wPawnThreatsR = (int) __builtin_popcountll(whitePawnAttacks & bRooks);
     int wPawnThreatsM = (int) __builtin_popcountll(whitePawnAttacks & bMinors);
 
-    mgScore += (wPawnThreatsQ * 50) + (wPawnThreatsR * 30) + (wPawnThreatsM * 15);
-    egScore += (wPawnThreatsQ * 40) + (wPawnThreatsR * 25) + (wPawnThreatsM * 15);
+    mgScore += (wPawnThreatsQ * P.pawnThreatQueen.mg) + (wPawnThreatsR * P.pawnThreatRook.mg) + (wPawnThreatsM * P.pawnThreatMinor.mg);
+    egScore += (wPawnThreatsQ * P.pawnThreatQueen.eg) + (wPawnThreatsR * P.pawnThreatRook.eg) + (wPawnThreatsM * P.pawnThreatMinor.eg);
 
     int bPawnThreatsQ = (int) __builtin_popcountll(blackPawnAttacks & wQueen);
     int bPawnThreatsR = (int) __builtin_popcountll(blackPawnAttacks & wRooks);
     int bPawnThreatsM = (int) __builtin_popcountll(blackPawnAttacks & wMinors);
 
-    mgScore -= (bPawnThreatsQ * 50) + (bPawnThreatsR * 30) + (bPawnThreatsM * 15);
-    egScore -= (bPawnThreatsQ * 40) + (bPawnThreatsR * 25) + (bPawnThreatsM * 15);
+    mgScore -= (bPawnThreatsQ * P.pawnThreatQueen.mg) + (bPawnThreatsR * P.pawnThreatRook.mg) + (bPawnThreatsM * P.pawnThreatMinor.mg);
+    egScore -= (bPawnThreatsQ * P.pawnThreatQueen.eg) + (bPawnThreatsR * P.pawnThreatRook.eg) + (bPawnThreatsM * P.pawnThreatMinor.eg);
 
     int wMinorThreatsQ = (int) __builtin_popcountll(whiteMinorAttacks & bQueen);
     int wMinorThreatsR = (int) __builtin_popcountll(whiteMinorAttacks & bRooks);
-    mgScore += (wMinorThreatsQ * 35) + (wMinorThreatsR * 15);
-    egScore += (wMinorThreatsQ * 25) + (wMinorThreatsR * 10);
+    mgScore += (wMinorThreatsQ * P.minorThreatQueen.mg) + (wMinorThreatsR * P.minorThreatRook.mg);
+    egScore += (wMinorThreatsQ * P.minorThreatQueen.eg) + (wMinorThreatsR * P.minorThreatRook.eg);
 
     int bMinorThreatsQ = (int) __builtin_popcountll(blackMinorAttacks & wQueen);
     int bMinorThreatsR = (int) __builtin_popcountll(blackMinorAttacks & wRooks);
-    mgScore -= (bMinorThreatsQ * 35) + (bMinorThreatsR * 15);
-    egScore -= (bMinorThreatsQ * 25) + (bMinorThreatsR * 10);
+    mgScore -= (bMinorThreatsQ * P.minorThreatQueen.mg) + (bMinorThreatsR * P.minorThreatRook.mg);
+    egScore -= (bMinorThreatsQ * P.minorThreatQueen.eg) + (bMinorThreatsR * P.minorThreatRook.eg);
 
     return (((256 - phase) * mgScore) + (phase * egScore)) / 256;
 }
