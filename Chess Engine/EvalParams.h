@@ -15,6 +15,16 @@
 // Left out on purpose: the mop-up / KBN mating logic, draw detection and the
 // phase thresholds. They encode endgame technique and structure rather than
 // weights, and tuning them on game results tends to hurt mating ability.
+//
+// The values below come from Texel tuning (Tuner.cpp, 5 iterations) on 1.29M
+// quiet positions from 90k self-play games (datagen, 5000 nodes per move),
+// starting from hand-set values and the PeSTO tables. Material was kept fixed.
+// Hand corrections after tuning: kingSafetyTable was made non-decreasing and
+// indices 55+ were reset to the old values (they are reached too rarely to tune),
+// and queenNoMoves.mg was reset to -150. Some terms overlap (for example
+// passedPawnMg with the pawn PST on the 7th rank, centerPawn with centerPawnDuo
+// and the d4/e4 squares), so a single value can look odd while the sum is sound.
+// Self-play at 10+0.1 against the old values: +113 +/- 39 Elo.
 
 struct EvalPair {
     int mg;
@@ -23,158 +33,158 @@ struct EvalPair {
 
 struct EvalParams {
     // Bonus for the side to move.
-    int tempo = 20;
+    int tempo = 18;
 
     // Material, indexed pawn, knight, bishop, rook, queen.
     EvalPair material[5] = { {100, 125}, {320, 285}, {330, 350}, {500, 600}, {900, 1000} };
-    EvalPair bishopPair = {20, 50};
+    EvalPair bishopPair = {44, 50};
 
     // Pawn structure.
-    EvalPair centerPawn          = {12, 5};     // pawn on d4/e4 (d5/e5 for Black)
-    EvalPair centerPawnDuo       = {12, 6};     // both center pawns
-    EvalPair doubledPawn         = {-10, -20};  // per file holding 2+ own pawns
-    EvalPair isolatedPawn        = {-10, -20};  // per isolated pawn
-    EvalPair protectedPassedPawn = {10, 25};    // passed pawn defended by a pawn
+    EvalPair centerPawn          = {-2, -32};   // pawn on d4/e4 (d5/e5 for Black)
+    EvalPair centerPawnDuo       = {22, 15};    // both center pawns
+    EvalPair doubledPawn         = {-17, -36};  // per file holding 2+ own pawns
+    EvalPair isolatedPawn        = {6, -8};     // per isolated pawn
+    EvalPair protectedPassedPawn = {2, 8};      // passed pawn defended by a pawn
     // Passed pawn bonus by relative rank (0 = own back rank). A candidate passer
     // gets half of the bonus for the rank in front of it.
-    int passedPawnMg[8] = { 0, 5, 10, 20, 40, 70, 100, 0 };
-    int passedPawnEg[8] = { 0, 10, 25, 50, 100, 160, 260, 0 };
+    int passedPawnMg[8] = { 0, -12, -28, -19, -8, 11, -67, 0 };
+    int passedPawnEg[8] = { 0, 3, 18, 51, 91, 133, 152, 0 };
 
     // Piece-square tables [piece][square], piece order pawn..king. Square 0 is a8
     // (ChessProgramming wiki layout): White looks up sq ^ 56, Black looks up sq.
     int pstMg[6][64] = {
         { // pawn
                0,    0,    0,    0,    0,    0,    0,    0,
-              98,  134,   61,   95,   68,  126,   34,  -11,
-              -6,    7,   26,   31,   65,   56,   25,  -20,
-             -14,   13,    6,   21,   23,   12,   17,  -23,
-             -27,   -2,   -5,   12,   17,    6,   10,  -25,
-             -26,   -4,   -4,  -10,    3,    3,   33,  -12,
-             -35,   -1,  -20,  -23,  -15,   24,   38,  -22,
+             140,  184,  159,  172,   98,  125,   28,   46,
+              -2,  -16,    3,   39,   58,   32,   -2,    5,
+             -34,   -6,   -1,   22,   25,    4,   -2,  -15,
+             -38,  -22,   -8,   21,   12,    6,  -14,  -35,
+             -23,  -17,   -7,  -12,  -12,  -17,   25,  -27,
+             -50,   -1,  -31,  -13,  -18,    3,   37,  -46,
                0,    0,    0,    0,    0,    0,    0,    0,
         },
         { // knight
-            -167,  -89,  -34,  -49,   61,  -97,  -15, -107,
-             -73,  -41,   72,   36,   23,   62,    7,  -17,
-             -47,   60,   37,   65,   84,  129,   73,   44,
-              -9,   17,   19,   53,   37,   69,   18,   22,
-             -13,    4,   16,   13,   28,   19,   21,   -8,
-             -23,   -9,   12,   10,   19,   17,   25,  -16,
-             -29,  -53,  -12,   -3,   -1,   18,  -14,  -19,
-            -105,  -21,  -58,  -33,  -17,  -28,  -19,  -23,
+            -107, -110,  -94,  -68,   71, -129,  -25,  -49,
+              12,  -18,   30,   23,   19,   72,  -99,  -28,
+              67,   82,   30,   91,   99,  110,   43,  113,
+              23,   29,   37,   68,   54,   79,   25,   51,
+               4,  -21,   42,   16,   33,   33,    9,    6,
+             -22,   19,   12,   18,   44,   28,   51,   -6,
+               4,  -29,   -5,   28,   32,   24,   16,  -15,
+             -28,  -19,  -33,   19,   10,   36,   -2,  -85,
         },
         { // bishop
-             -29,    4,  -82,  -37,  -25,  -42,    7,   -8,
-             -26,   16,  -18,  -13,   30,   59,   18,  -47,
-             -16,   37,   43,   40,   35,   50,   37,   -2,
-              -4,    5,   19,   50,   37,   37,    7,   -2,
-              -6,   13,   13,   26,   34,   12,   10,    4,
-               0,   15,   15,   15,   14,   27,   18,   10,
-               4,   15,   16,    0,    7,   21,   33,    1,
-             -33,   -3,  -14,  -21,  -13,  -12,  -39,  -21,
+             -13,  -32,  -77,  -70,  -21, -198, -123,  -30,
+             -64,  -21,  -33,  -11,  -13,  -38,  -49,    8,
+               2,   46,   28,   40,   40,   77,   32,    7,
+              -1,    4,    0,   50,   28,   41,   13,    7,
+               5,  -26,    5,   43,   27,   20,  -12,  -31,
+               8,   38,   16,    1,    8,   24,   31,    4,
+             -27,   22,    4,   14,   10,   21,   40,   14,
+             -70,  -36,   -8,  -19,  -11,  -16,  -91,   -5,
         },
         { // rook
-              32,   42,   32,   51,   63,    9,   31,   43,
-              27,   32,   58,   62,   80,   67,   26,   44,
-              -5,   19,   26,   36,   17,   45,   61,   16,
-             -24,  -11,    7,   26,   24,   35,   -8,  -20,
-             -36,  -26,  -12,   -1,    9,   -7,    6,  -23,
-             -45,  -25,  -16,  -17,    3,    0,   -5,  -33,
-             -44,  -16,  -20,   -9,   -1,   11,   -6,  -71,
-             -19,  -13,    1,   17,   16,    7,  -37,  -26,
+              32,   82,   14,   34,   13,   17,   28,   42,
+              44,   40,   40,   84,   86,   77,   50,   50,
+             -14,   42,    2,   38,   41,   44,   46,   34,
+             -50,  -11,  -41,   18,   -5,   35,  -38,  -52,
+             -29,  -51,  -15,  -23,  -17,  -23,  -23,  -24,
+             -37,  -27,  -39,  -31,  -22,  -14,   -2,  -30,
+             -74,   -5,  -14,  -37,   -5,  -22,    3, -103,
+             -35,  -30,  -10,    5,   16,    2,  -45,  -41,
         },
         { // queen
-             -28,    0,   29,   12,   59,   44,   43,   45,
-             -24,  -39,   -5,    1,  -16,   57,   28,   54,
-             -13,  -17,    7,    8,   29,   56,   47,   57,
-             -27,  -27,  -16,  -16,   -1,   17,   -2,    1,
-              -9,  -26,   -9,  -10,   -2,   -4,    3,   -3,
-             -14,    2,  -11,   -2,   -5,    2,   14,    5,
-             -35,   -8,   11,    2,    8,   15,   -3,    1,
-              -1,  -18,   -9,   10,  -15,  -25,  -31,  -50,
+             -62,    5,   17,   67,   88,  105,   48,  -27,
+               6,    4,    4,   47,   38,   41,    4,   21,
+              -1,   14,   10,   16,   -7,   51,    6,   45,
+             -14,  -21,  -14,  -37,  -62,  -37,  -39,  -11,
+               6,  -10,   13,    3,  -23,    4,   -3,    9,
+              22,   22,    5,   17,    9,    5,   34,   18,
+              35,    8,   31,   47,   52,   48,   57,   18,
+              20,  -46,   36,   36,   41,   10,   79,  -48,
         },
         { // king
-             -65,   23,   16,  -15,  -56,  -34,    2,   13,
-              29,   -1,  -20,   -7,   -8,   -4,  -38,  -29,
-              -9,   24,    2,  -16,  -20,    6,   22,  -22,
-             -17,  -20,  -12,  -27,  -30,  -25,  -14,  -36,
-             -49,   -1,  -27,  -39,  -46,  -44,  -33,  -51,
-             -14,  -14,  -22,  -46,  -44,  -30,  -15,  -27,
-               1,    7,   -8,  -64,  -43,  -16,    9,    8,
-             -15,   36,   12,  -54,    8,  -28,   24,   14,
+             -16,   89,   22,    1,  -54,    5,   24,   16,
+              38,    9,  -17,   17,   -9,   -1,  -13,  -27,
+              -1,   24,    1,   -5,  -19, -104, -184,   -6,
+             -38,  -19, -138,  -34,  -69,  -30,   -9,  -53,
+             -83,  -73,  -68,  -41,  -79, -115,  -73, -114,
+             -65,  -64, -170, -118,  -90, -100,  -28,  -37,
+              12,  -27,  -22,  -59,  -47,  -24,   39,   27,
+             -33,   33,   -4,  -50,   11,  -48,   30,    7,
         },
     };
     int pstEg[6][64] = {
         { // pawn
                0,    0,    0,    0,    0,    0,    0,    0,
-             178,  173,  158,  134,  147,  132,  165,  187,
-              94,  100,   85,   67,   56,   53,   82,   84,
-              32,   24,   13,    5,   -2,    4,   17,   17,
-              13,    9,   -3,   -7,   -7,   -8,    3,   -1,
-               4,    7,   -6,    1,    0,   -5,   -1,   -8,
-              13,    8,    8,   10,   13,    0,    2,   -7,
+             150,  148,  139,   86,  104,  133,  169,  182,
+              83,   91,   46,   -1,  -30,   17,   46,   75,
+              28,   39,   -3,  -31,  -31,    4,   17,   18,
+              13,    9,  -21,   -7,  -16,  -21,   15,   -1,
+              -2,   -2,  -18,  -15,  -19,   -7,   -9,  -17,
+              13,    2,   -3,  -18,    1,  -10,  -18,  -10,
                0,    0,    0,    0,    0,    0,    0,    0,
         },
         { // knight
-             -58,  -38,  -13,  -28,  -31,  -27,  -63,  -99,
-             -25,   -8,  -25,   -2,   -9,  -25,  -24,  -52,
-             -24,  -20,   10,    9,   -1,   -9,  -19,  -41,
-             -17,    3,   22,   22,   22,   11,    8,  -18,
-             -18,   -6,   16,   25,   16,   17,    4,  -18,
-             -23,   -3,   -1,   15,   10,   -3,  -20,  -22,
-             -42,  -20,  -10,   -5,   -2,  -20,  -23,  -44,
-             -29,  -51,  -23,  -15,  -22,  -18,  -50,  -64,
+             -54,   24,  -55,  -20,  -29,  -12,  -93,  -48,
+             -12,    7,  -22,   14,    8,  -29,    5,  -46,
+              22,  -27,   12,    7,    7,  -20,   11,  -50,
+              11,   44,   40,   30,   34,   17,   24,   -4,
+               8,   10,   29,   46,   38,   28,    6,  -40,
+             -12,   -7,   14,   13,    9,    7,  -17,   -3,
+              -9,    5,   -8,    7,    4,   -8,  -25,  -40,
+             -28,    5,  -15,  -22,    1,  -19,  -11,  -38,
         },
         { // bishop
-             -14,  -21,  -11,   -8,   -7,   -9,  -17,  -24,
-              -8,   -4,    7,  -12,   -3,  -13,   -4,  -14,
-               2,   -8,    0,   -1,   -2,    6,    0,    4,
-              -3,    9,   12,    9,   14,   10,    3,    2,
-              -6,    3,   13,   19,    7,   10,   -3,   -9,
-             -12,   -3,    8,   10,   13,    3,   -7,  -15,
-             -14,  -18,   -7,   -1,    4,   -9,  -15,  -27,
-             -23,   -9,  -23,   -5,   -9,  -16,   -5,  -17,
+              -9,  -26,  -15,    1,  -33,  -14,  -21,  -33,
+              -7,  -32,   -3,  -26,   -2,  -13,   -9,  -81,
+             -10,  -17,  -13,  -24,  -15,  -16,    0,   -8,
+             -27,    8,   13,   14,    4,    9,   -4,  -32,
+             -33,   14,   13,   10,    6,  -10,    6,  -13,
+              -1,   -2,  -10,    5,   17,   -3,  -31,   -7,
+             -17,  -24,  -17,  -25,  -20,  -22,  -35,  -45,
+               1,  -17,  -13,  -28,  -25,   -6,   -9,  -15,
         },
         { // rook
-              13,   10,   18,   15,   12,   12,    8,    5,
-              11,   13,   13,   11,   -3,    3,    8,    3,
-               7,    7,    7,    5,    4,   -3,   -5,   -3,
-               4,    3,   13,    1,    2,    1,   -1,    2,
-               3,    5,    8,    4,   -5,   -6,   -8,  -11,
-              -4,    0,   -5,   -1,   -7,  -12,   -8,  -16,
-              -6,   -6,    0,    2,   -9,   -9,  -11,   -3,
-              -9,    2,    3,   -1,   -5,  -13,    4,  -20,
+              30,   13,   13,    3,   10,   33,    7,   23,
+              10,   13,    3,   -2,   -8,   -2,    8,   -5,
+              28,    6,   13,    4,  -10,   19,    0,   -8,
+              31,   21,   35,   -4,    2,   -5,    7,   16,
+              27,    8,   10,    0,   -3,   12,    0,  -16,
+               2,   -3,   -4,   -1,   -6,  -10,  -29,   -5,
+              17,   -7,    4,    0,  -36,  -21,  -19,  -12,
+              -9,    2,   -4,  -11,  -25,  -31,   12,  -20,
         },
         { // queen
-              -9,   22,   22,   27,   27,   19,   10,   20,
-             -17,   20,   32,   41,   58,   25,   30,    0,
-             -20,    6,    9,   49,   47,   35,   19,    9,
-               3,   22,   24,   45,   57,   40,   57,   36,
-             -18,   28,   19,   47,   31,   34,   39,   23,
-             -16,  -27,   15,    6,    9,   17,   10,    5,
-             -22,  -23,  -30,  -16,  -16,  -23,  -36,  -32,
-             -33,  -28,  -22,  -43,   -5,  -32,  -20,  -41,
+             108,  115,  141,  155,  132,   59,  101,  116,
+             108,  169,  176,  124,  191,  148,  158,  140,
+              72,  118,  186,  182,  199,  173,  143,   20,
+             163,  207,  172,  248,  254,  206,  199,  119,
+              25,  182,  160,  176,  196,  130,  115,   79,
+              70,   63,  106,   97,  130,  165,   47,    7,
+              65,   38,   35,   24,   -3,   19,  -37,  -26,
+              52,   52,  -12,  -32,   -5,   48,  -12,   23,
         },
         { // king
-             -74,  -35,  -18,  -18,  -11,   15,    4,  -17,
-             -12,   17,   14,   17,   17,   38,   23,   11,
-              10,   17,   23,   15,   20,   45,   44,   13,
-              -8,   22,   24,   27,   26,   33,   26,    3,
-             -18,   -4,   21,   24,   27,   23,    9,  -11,
-             -19,   -3,   11,   21,   23,   16,    7,   -9,
-             -27,  -11,    4,   13,   14,    4,   -5,  -17,
-             -53,  -34,  -21,  -11,  -28,  -14,  -24,  -43,
+             130,   -3,   37,   62,   -3,   63,   23,  -26,
+              -4,   59,   80,   66,   70,   33,   46,   48,
+              33,   48,   27,   47,   62,   14,   22,   31,
+              31,   60,   66,   35,   39,   35,   43,   19,
+              -9,   21,   39,   50,   42,   63,   30,    3,
+              11,   27,   63,   46,   50,   47,   21,   -4,
+             -27,    7,   14,   31,   23,   17,   -5,  -17,
+             -55,  -45,  -21,  -10,  -40,  -14,  -34,  -55,
         },
     };
 
     // Mobility, indexed by the number of reachable squares that are neither
     // occupied by own pieces nor attacked by enemy pawns.
-    int knightMobilityMg[9]  = { -20, -15, -8, -2, 2, 8, 12, 16, 20 };
-    int knightMobilityEg[9]  = { -40, -30, -15, -5, 5, 15, 25, 35, 40 };
-    int bishopMobilityMg[14] = { -20, -12, -8, -2, 2, 8, 12, 18, 20, 22, 25, 25, 25, 25 };
-    int bishopMobilityEg[14] = { -40, -25, -15, -5, 5, 15, 25, 35, 40, 45, 50, 50, 50, 50 };
-    int rookMobilityMg[15]   = { -20, -12, -8, -5, -2, 0, 2, 5, 8, 12, 15, 18, 20, 20, 20 };
-    int rookMobilityEg[15]   = { -40, -25, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 40 };
+    int knightMobilityMg[9]  = { -34, -13, -6, -2, 5, 11, 18, 28, 25 };
+    int knightMobilityEg[9]  = { -68, -20, 1, 12, 24, 32, 39, 33, 16 };
+    int bishopMobilityMg[14] = { -47, -19, -5, 4, 11, 11, 11, 9, 19, 15, 26, 28, 18, 22 };
+    int bishopMobilityEg[14] = { -96, -22, -13, -4, 8, 27, 32, 34, 34, 26, 33, 24, 29, 37 };
+    int rookMobilityMg[15]   = { -51, -35, -27, -17, -12, 3, 7, 17, 9, 19, 34, 22, 20, 3, 12 };
+    int rookMobilityEg[15]   = { -86, -41, -30, -13, -6, -4, 7, 10, 26, 26, 31, 32, 37, 32, 26 };
     // Queen that has left its back rank and can barely move.
     EvalPair queenNoMoves  = {-150, -100};  // 0 safe squares
     EvalPair queenFewMoves = {-80, -40};    // 1-2 safe squares
@@ -184,44 +194,44 @@ struct EvalParams {
     int kingAttackKnight = 2;
     int kingAttackBishop = 2;
     int kingAttackRook   = 3;
-    int kingAttackQueen  = 5;
+    int kingAttackQueen  = 4;
     int kingSafetyTable[100] = {
-           0,    0,    1,    2,    3,    5,    7,    9,   12,   15,
-          18,   22,   26,   30,   35,   39,   44,   50,   56,   62,
-          68,   75,   82,   85,   89,   97,  105,  113,  122,  131,
-         140,  150,  169,  180,  191,  202,  213,  225,  237,  248,
-         260,  272,  283,  295,  307,  319,  330,  342,  354,  366,
-         377,  389,  401,  412,  424,  436,  448,  459,  471,  483,
-         494,  500,  500,  500,  500,  500,  500,  500,  500,  500,
-         500,  500,  500,  500,  500,  500,  500,  500,  500,  500,
-         500,  500,  500,  500,  500,  500,  500,  500,  500,  500,
-         500,  500,  500,  500,  500,  500,  500,  500,  500,  500,
+        -2, -2, -2, -2, 2, 8, 8, 8, 11, 11,
+        11, 11, 24, 31, 42, 42, 43, 50, 50, 62,
+        62, 80, 80, 89, 89, 105, 109, 131, 131, 131,
+        167, 185, 185, 185, 188, 220, 220, 264, 264, 271,
+        336, 336, 336, 339, 339, 339, 339, 339, 367, 404,
+        404, 404, 412, 414, 424, 436, 448, 459, 471, 483,
+        494, 500, 500, 500, 500, 500, 500, 500, 500, 500,
+        500, 500, 500, 500, 500, 500, 500, 500, 500, 500,
+        500, 500, 500, 500, 500, 500, 500, 500, 500, 500,
+        500, 500, 500, 500, 500, 500, 500, 500, 500, 500,
     };
 
     // King shelter (middlegame only).
-    int kingFileNoOwnPawn     = -15;  // king on a flank file with no own pawn on it
-    int kingFileFullyOpen     = -10;  // ...and no enemy pawn either (extra)
-    int kingAdjFilesNoOwnPawn = -10;  // no own pawn on the files next to the king
-    int kingCenterOpenFile    = -30;  // king on a center file with no pawns at all
-    int shieldPawnUnmoved     = 20;   // shield pawn on its starting rank
-    int shieldPawnAdvanced    = 10;   // shield pawn one step forward
+    int kingFileNoOwnPawn     = -26;  // king on a flank file with no own pawn on it
+    int kingFileFullyOpen     = -77;  // ...and no enemy pawn either (extra)
+    int kingAdjFilesNoOwnPawn = -29;  // no own pawn on the files next to the king
+    int kingCenterOpenFile    = -83;  // king on a center file with no pawns at all
+    int shieldPawnUnmoved     = 21;   // shield pawn on its starting rank
+    int shieldPawnAdvanced    = 9;    // shield pawn one step forward
     int shieldPawnMissing     = -10;  // neither
 
     // Trapped pieces (halved deep in the endgame).
-    int trappedBishop7th = -80;  // e.g. white bishop a7 with black pawn b6
-    int trappedBishop6th = -50;  // e.g. white bishop a6 with black pawn b7
-    int knightInCorner   = -40;  // knight on the enemy's a8/h8 corner
-    int trappedKnight7th = -30;  // knight on a7 next to enemy pawns on b6/c6
+    int trappedBishop7th = -169;  // e.g. white bishop a7 with black pawn b6
+    int trappedBishop6th = -17;   // e.g. white bishop a6 with black pawn b7
+    int knightInCorner   = -25;   // knight on the enemy's a8/h8 corner
+    int trappedKnight7th = -81;   // knight on a7 next to enemy pawns on b6/c6
 
     // A piece pinned to its own king by a rook, bishop or queen.
-    EvalPair pinnedPiece = {-20, -42};
+    EvalPair pinnedPiece = {-12, -44};
 
     // Threats: a pawn or minor piece attacking a more valuable enemy piece.
-    EvalPair pawnThreatQueen  = {50, 40};
-    EvalPair pawnThreatRook   = {30, 25};
-    EvalPair pawnThreatMinor  = {15, 15};
-    EvalPair minorThreatQueen = {35, 25};
-    EvalPair minorThreatRook  = {15, 10};
+    EvalPair pawnThreatQueen  = {60, 42};
+    EvalPair pawnThreatRook   = {123, 25};
+    EvalPair pawnThreatMinor  = {77, 56};
+    EvalPair minorThreatQueen = {60, 34};
+    EvalPair minorThreatRook  = {75, 42};
 };
 
 extern EvalParams evalParams;
