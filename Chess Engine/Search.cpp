@@ -45,9 +45,28 @@ void Search::waitForFinish() {
     if (worker.joinable()) worker.join();
 }
 
+SearchResult Search::searchSync(Board& board, const SearchLimits& limits) {
+    stopAndWait();
+    stopped = false;
+    infinite = false;
+    silent = true;
+    startSearch(board, limits);
+    silent = false;
+
+    SearchResult result;
+    result.hasMove = hasRootMove;
+    result.move = bestMoveFound;
+    result.score = bestScoreFound;
+    result.isMate = std::abs(bestScoreFound) > MATE_BOUND;
+    return result;
+}
+
 void Search::startSearch(Board& board, const SearchLimits& limits) {
     const int maxDepth = limits.depth;
     nodes = 0;
+    nodeLimit = limits.nodes;
+    hasRootMove = false;
+    bestScoreFound = 0;
     startTime = std::chrono::high_resolution_clock::now();
     int phase = board.getPhase();
     // "go infinite" ignores any clock values; "movetime" wins over the clock.
@@ -58,6 +77,7 @@ void Search::startSearch(Board& board, const SearchLimits& limits) {
     }
     // UCI: in infinite mode bestmove may only be sent after "stop".
     auto printBestMove = [this](const std::string& move) {
+        if (silent) return;
         while (infinite && !stopped) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         uciPrint("bestmove " + move);
     };
@@ -99,6 +119,7 @@ void Search::startSearch(Board& board, const SearchLimits& limits) {
         rootMoveList[i].score = scoreMove(board, rootMoveList[i], 0);
     }
     // Fallback in case the search is stopped before depth 1 completes.
+    hasRootMove = true;
     bestMoveFound = rootMoveList[0];
     int previousBestValue = 0;
     // Principal variation of the best root move in the current iteration.
@@ -192,8 +213,9 @@ void Search::startSearch(Board& board, const SearchLimits& limits) {
         }
 
         if (!stopped) {
-            bestMoveFound = currentBestMove; 
-            previousBestValue = bestValue; 
+            bestMoveFound = currentBestMove;
+            previousBestValue = bestValue;
+            bestScoreFound = bestValue;
 
             auto now = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = now - startTime;
@@ -207,7 +229,7 @@ void Search::startSearch(Board& board, const SearchLimits& limits) {
                  << " time " << (int)(elapsed.count() * 1000)
                  << " pv";
             for (int p = 0; p < rootPVLength; p++) info << " " << moveToString(rootPV[p]);
-            uciPrint(info.str());
+            if (!silent) uciPrint(info.str());
             if (bestValue > MATE_BOUND) { 
 
                 int mateDistance = MATE_SCORE - bestValue; 
@@ -226,7 +248,7 @@ void Search::startSearch(Board& board, const SearchLimits& limits) {
     stats << "info string cutoffs " << betaCutoffs
           << " first-move " << firstMoveCutoffs
           << " rate " << firstMoveRate << "%";
-    uciPrint(stats.str());
+    if (!silent) uciPrint(stats.str());
 
     printBestMove(moveToString(bestMoveFound));
 }
@@ -240,6 +262,7 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
             stopped = true;
         }
     }
+    if (nodeLimit && nodes >= nodeLimit) stopped = true;
     if (ply > 0 && (board.isRepetition() || board.getMovesWH() >=100)) {
 
         return 0;

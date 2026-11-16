@@ -75,6 +75,10 @@ void Board::setupStartingBoard(){
     piecesBB[B_KING]   = (1ULL << 60);
     updateOccupancy();
     setupBoardArray();
+    // isInCheck() and the evaluation read the cached king squares; they are
+    // otherwise only set by parseFEN and by king moves.
+    updateKingSquares(WHITE, e1);
+    updateKingSquares(BLACK, e8);
     sideToMove = WHITE;
     initZobristKey();
     initPawnKey();
@@ -196,6 +200,55 @@ void Board::parseFEN(const std::string& fen) {
     historyCount = 0;
     historyStack[historyCount++] = zobristKey;
     movesWithoutHalf = 0;
+}
+
+void Board::loadForEval(const uint64_t pieces[12], Color stm, int castling, int ep) {
+    for (int i = 0; i < 12; i++) piecesBB[i] = pieces[i];
+    updateOccupancy();
+    setupBoardArray();
+    whiteKingSq = getLS1B(piecesBB[W_KING]);
+    blackKingSq = getLS1B(piecesBB[B_KING]);
+    sideToMove = stm;
+    castlingRights = castling;
+    enPassantSq = ep;
+}
+
+std::string Board::toFEN() const {
+    static const char pieceChars[] = "PNBRQKpnbrqk";
+    std::string fen;
+    for (int rank = 7; rank >= 0; rank--) {
+        int empty = 0;
+        for (int file = 0; file < 8; file++) {
+            int piece = boardArray[rank * 8 + file];
+            if (piece < 0) { empty++; continue; }
+            if (empty) { fen += char('0' + empty); empty = 0; }
+            fen += pieceChars[piece];
+        }
+        if (empty) fen += char('0' + empty);
+        if (rank > 0) fen += '/';
+    }
+
+    fen += (sideToMove == WHITE) ? " w " : " b ";
+
+    std::string castling;
+    if (castlingRights & WK) castling += 'K';
+    if (castlingRights & WQ) castling += 'Q';
+    if (castlingRights & BK) castling += 'k';
+    if (castlingRights & BQ) castling += 'q';
+    fen += castling.empty() ? "-" : castling;
+
+    if (enPassantSq >= 0) {
+        fen += ' ';
+        fen += char('a' + enPassantSq % 8);
+        fen += char('1' + enPassantSq / 8);
+    } else {
+        fen += " -";
+    }
+
+    // historyStack holds one entry per position since setup, so plies played = historyCount - 1.
+    int plies = historyCount > 0 ? historyCount - 1 : 0;
+    fen += " " + std::to_string(movesWithoutHalf) + " " + std::to_string(1 + plies / 2);
+    return fen;
 }
 
 bool Board::makeMove(Move move) {

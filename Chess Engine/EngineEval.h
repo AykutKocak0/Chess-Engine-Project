@@ -9,6 +9,9 @@ public:
     static int evaluate(const Board& board);
     static bool isEndGame(const Board& board);
     static int getPhase(const Board& board);
+    // The tuner turns this off: it evaluates from several threads at once and
+    // changes the weights, so cached pawn scores would be shared and stale.
+    static inline bool usePawnHash = true;
 
 private:
     static int evaluateMaterial(const Board& board, int phase);

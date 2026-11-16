@@ -230,3 +230,17 @@ extern EvalParams evalParams;
 static_assert(sizeof(EvalParams) % sizeof(int) == 0, "EvalParams must contain only ints");
 constexpr int PARAM_COUNT = sizeof(EvalParams) / sizeof(int);
 inline int* paramData(EvalParams& p) { return reinterpret_cast<int*>(&p); }
+
+#include <string>
+
+// Name of the field that flat parameter index i belongs to, e.g. "pstMg[1][27]".
+std::string paramName(int index);
+// Checks that the field list in EvalParams.cpp covers every member exactly once.
+bool paramFieldsComplete();
+
+// Text format, one field per line: "<name> <values...>". Fields missing from the
+// file keep their current values. Returns false (and prints why) on errors.
+bool loadParams(const std::string& path, EvalParams& p);
+bool saveParams(const std::string& path, const EvalParams& p);
+// Writes the values as C++ member initializers, ready to paste into EvalParams.h.
+bool saveParamsCpp(const std::string& path, const EvalParams& p);

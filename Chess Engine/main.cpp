@@ -9,8 +9,20 @@
 #include "TransPositionTable.h"
 #include <chrono>
 #include "EngineEval.h"
+#include "Datagen.h"
+#include "EvalParams.h"
+#include "Tuner.h"
 
-
+// datagen <games> <nodes> <outfile> [seed] [positionsPerGame]
+DatagenConfig parseDatagen(std::istream& in) {
+    DatagenConfig config;
+    in >> config.games >> config.nodes >> config.outFile;
+    uint64_t seed;
+    if (in >> seed) config.seed = seed;
+    int perGame;
+    if (in >> perGame) config.positionsPerGame = perGame;
+    return config;
+}
 
 Move parseMove(Board& board, std::string moveStr, Search& search) {
     GenerateMoves gen;
@@ -62,12 +74,38 @@ void handlePosition(Board& board, std::stringstream& ss, Search& search) {
     
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     Board board;
     Search search;
     std::string line, command;
     GenerateMoves gen;
     EngineEval eval;
+
+    int argi = 1;
+    // Start with tuned weights instead of the compiled-in ones:
+    //   Botkut.exe params tuned.txt            (then UCI as usual)
+    //   Botkut.exe params tuned.txt tune ...   (continue tuning from them)
+    if (argc > argi + 1 && std::string(argv[argi]) == "params") {
+        if (!loadParams(argv[argi + 1], evalParams)) return 1;
+        argi += 2;
+    }
+
+    if (argc > argi) {
+        std::string mode = argv[argi];
+        std::stringstream args;
+        for (int i = argi + 1; i < argc; i++) args << argv[i] << " ";
+        // Several datagen processes can run in parallel:
+        //   Botkut.exe datagen 10000 5000 data_1.epd 1
+        if (mode == "datagen") {
+            runDatagen(parseDatagen(args), search);
+            return 0;
+        }
+        //   Botkut.exe tune threads=6 data_1.epd data_2.epd
+        if (mode == "tune") {
+            runTuner(parseTuneArgs(std::vector<std::string>(argv + argi + 1, argv + argc)));
+            return 0;
+        }
+    }
 
     // The search runs on its own thread (see Search::startAsync), so this loop keeps
     // reading commands while it thinks and "stop" / "isready" are answered at once.
@@ -109,6 +147,7 @@ int main() {
                 else if (subCommand == "binc") ss >> blackIncrement;
                 else if (subCommand == "movestogo") ss >> limits.movesToGo;
                 else if (subCommand == "movetime") ss >> limits.moveTime;
+                else if (subCommand == "nodes") ss >> limits.nodes;
                 else if (subCommand == "infinite") limits.infinite = true;
             }
             if (limits.depth < 1) limits.depth = 1;
@@ -123,6 +162,13 @@ int main() {
         else if (command == "quit") {
             search.stopAndWait();
             break;
+        }
+        else if (command == "fen") {
+            uciPrint(board.toFEN());
+        }
+        else if (command == "datagen") {
+            search.stopAndWait();
+            runDatagen(parseDatagen(ss), search);
         }
         else if(command == "eval"){
             search.stopAndWait();   // evaluation uses the shared pawn hash table

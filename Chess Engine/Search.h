@@ -21,12 +21,25 @@ struct SearchLimits {
     int increment = 0;
     int movesToGo = 0;
     int moveTime = 0;    // fixed ms per move, 0 = not given
+    uint64_t nodes = 0;  // stop after this many nodes, 0 = no limit
     bool infinite = false;
+};
+
+// Outcome of a synchronous search (see Search::searchSync).
+struct SearchResult {
+    bool hasMove = false;  // false if the side to move has no legal move
+    Move move;
+    int score = 0;         // from the side to move's point of view
+    bool isMate = false;   // score is a mate score
 };
 
 class Search {
 public:
     ~Search() { stopAndWait(); }
+
+    // Searches on the calling thread without printing anything and returns the
+    // result. Used by datagen; must not be mixed with a running async search.
+    SearchResult searchSync(Board& board, const SearchLimits& limits);
 
     // Starts searching a copy of the board on a background thread and returns
     // immediately. A search that is still running is stopped first.
@@ -46,6 +59,10 @@ private:
     std::atomic<bool> stopped{false};
     std::atomic<bool> infinite{false};
     std::thread worker;
+    bool silent = false;         // suppress info/bestmove output (searchSync)
+    uint64_t nodeLimit = 0;      // 0 = none
+    bool hasRootMove = false;
+    int bestScoreFound = 0;      // score of the last completed iteration
 
     int alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply, bool allowNull);
     int quiescence(Board& board, int alpha, int beta, int ply, int qsDepth = 0);

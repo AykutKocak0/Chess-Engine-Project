@@ -192,8 +192,8 @@ int EngineEval::bishopPair(const Board& board, int phase){
 int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t whitePawnAttacks, uint64_t blackPawnAttacks) {
     int mgScore = 0, egScore = 0;
     uint64_t pawnKey = board.getPawnKey();
-    PawnEntry* entry = PTT.pawnProbe(pawnKey);
-    
+    PawnEntry* entry = usePawnHash ? PTT.pawnProbe(pawnKey) : nullptr;
+
     if (entry != nullptr && entry->key == pawnKey) {
         return ((entry->egScore * phase) + (entry->mgScore * (256 - phase))) / 256;
     }
@@ -287,7 +287,7 @@ int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t wh
         }
     }
 
-    PTT.store(pawnKey, mgScore, egScore);
+    if (usePawnHash) PTT.store(pawnKey, mgScore, egScore);
     return ((egScore * phase) + (mgScore * (256 - phase))) / 256;
 }
 

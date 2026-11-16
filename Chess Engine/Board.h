@@ -32,6 +32,13 @@ public:
     int getKingSquare(Color color) const;
     int getMovesWH() {return movesWithoutHalf;}
     void parseFEN(const std::string& fen);
+    // FEN of the current position. The board does not track the move number, so
+    // the last field counts moves since the position was set up (startpos: exact).
+    std::string toFEN() const;
+    // Fast setup for the tuner: sets pieces, side to move, castling and en passant
+    // only. The hash keys and the move history are NOT set, so the board can be
+    // evaluated (with the pawn hash disabled) but not searched.
+    void loadForEval(const uint64_t pieces[12], Color stm, int castling, int ep);
     uint64_t Perft(int depth, GenerateMoves& gen);
     int evaluate();
     bool isInCheck();
