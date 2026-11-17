@@ -295,11 +295,20 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
         }
     }
     bool wasChecked = board.isInCheck();
+    // Zero-window nodes only prove a bound; PV nodes need an exact score and are
+    // never pruned by the static-eval tricks below.
+    bool pvNode = beta - alpha > 1;
+    int staticEval = wasChecked ? 0 : board.evaluate();
+
+    // Reverse futility pruning: we are so far above beta that even after giving up
+    // a margin per remaining ply the opponent should not get back below it.
+    if (!pvNode && !wasChecked && depthLeft <= RFP_MAX_DEPTH && std::abs(beta) < MATE_BOUND
+        && staticEval - RFP_MARGIN * depthLeft >= beta) {
+        return staticEval;
+    }
 
     if (!wasChecked && depthLeft <= 2) {
-        int staticEval = board.evaluate();
-        
-        int margin = 300 + 150 * depthLeft * depthLeft; 
+        int margin = 300 + 150 * depthLeft * depthLeft;
         
         if (staticEval < alpha - margin) {
             int value = quiescence(board, alpha - 1, alpha, ply, 0);
@@ -310,7 +319,9 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
         }
     }
 
-    if(!wasChecked && !board.isZugzwang() && depthLeft >= 3 && allowNull){
+    // Null move only where we already stand at or above beta: below it, passing
+    // almost never produces a cutoff and the reduced search is wasted.
+    if(!wasChecked && !board.isZugzwang() && depthLeft >= 3 && allowNull && staticEval >= beta){
         int nullReduction = 3;
         stackPieces[ply] = -1;
         board.makeNullMove();
@@ -341,11 +352,20 @@ int Search::alphaBeta(Board& board, int alpha, int beta, int depthLeft, int ply,
     int quietsTriedCount = 0;
     bool isEndGame = board.isEndGame();
     int movesSearched = 0;
-    for (int i = 0; i < moveCount; ++i) { 
+    // Late move pruning: at shallow non-PV nodes, once enough quiet moves have been
+    // tried, the remaining ones (ordered last) are skipped without being searched.
+    bool lmpNode = !pvNode && !wasChecked && depthLeft <= LMP_MAX_DEPTH;
+    int lmpLimit = LMP_BASE + depthLeft * depthLeft;
+    int quietsSeen = 0;
+    for (int i = 0; i < moveCount; ++i) {
         pickBestMove(moveList, moveCount, i);
+        bool quietMove = !moveList[i].isCapture() && !moveList[i].isPromotion();
+        // bestValue > -MATE_BOUND: some move was searched and it does not lose to a mate.
+        if (lmpNode && quietMove && quietsSeen >= lmpLimit && bestValue > -MATE_BOUND) continue;
         stackMoves[ply] = moveList[i];
         stackPieces[ply] = board.getPieceType(moveList[i].from);
         if(!board.makeMove(moveList[i])) continue;
+        if (quietMove) quietsSeen++;
         if (movesSearched == 0) {
             score = -alphaBeta(board, -beta, -alpha, depthLeft - 1, ply + 1, true);
         } else {

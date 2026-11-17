@@ -17,7 +17,6 @@ public:
     int castlingRights;
     GameState gameState;
     int historyCount;
-    int castleHappened;
     uint64_t historyStack[1024];
     void printBoard();
     bool makeMove(Move move);
@@ -45,7 +44,6 @@ public:
     uint64_t getZobristKey() const;
     uint64_t getPawnKey() const;
     bool isRepetition();
-    uint64_t calculateZobristFromScratch();
     bool isZugzwang() const;
     void makeNullMove();
     void unmakeNullMove();

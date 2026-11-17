@@ -2,6 +2,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <algorithm>
 #include "Board.h"
 #include "Search.h"
 #include "GenerateMoves.h"
@@ -22,6 +23,70 @@ DatagenConfig parseDatagen(std::istream& in) {
     int perGame;
     if (in >> perGame) config.positionsPerGame = perGame;
     return config;
+}
+
+// Fixed positions for "bench": searched to a fixed depth with fresh tables, so the
+// total node count is the same on every run and every machine. It only changes when
+// the search or evaluation changes, which makes it a quick check after an edit.
+static const char* BENCH_FENS[] = {
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+    "r1bq1rk1/pp2bppp/2n1pn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - 0 8",
+    "r3k2r/2pb1ppp/2pp1q2/p7/1nP1B3/1P2P3/P2N1PPP/R2QK2R w KQkq a6 0 14",
+    "4rrk1/2p1b1p1/p1p3q1/4p3/2P2n1p/1P1NR2P/PB3PP1/3R1QK1 b - - 2 24",
+    "r3qbrk/6p1/2b2pPp/p3pP1Q/PpPpP2P/3P1B2/2PB3K/R5R1 w - - 16 42",
+    "6k1/1R3p2/6p1/2Bp3p/3P2q1/P7/1P2rQ1K/5R2 b - - 4 44",
+    "8/8/1p2k1p1/3p3p/1p1P1P1P/1P2PK2/8/8 w - - 3 54",
+    "8/3p4/p1bk3p/Pp6/1Kp1PpPp/2P2P1P/2P5/5B2 b - - 1 33",
+    "2K5/p7/7P/5pR1/8/5k2/r7/8 w - - 0 1",
+};
+
+void runBench(Search& search, int depth) {
+    uint64_t totalNodes = 0;
+    auto start = std::chrono::high_resolution_clock::now();
+    for (const char* fen : BENCH_FENS) {
+        TT.clear();
+        PTT.clear();
+        Board board;
+        board.parseFEN(fen);
+        SearchLimits limits;
+        limits.depth = depth;
+        SearchResult result = search.searchSync(board, limits);
+        totalNodes += search.getNodes();
+        std::cout << search.moveToString(result.move) << "  " << search.getNodes() << "  " << fen << std::endl;
+    }
+    std::chrono::duration<double> elapsed = std::chrono::high_resolution_clock::now() - start;
+    TT.clear();
+    PTT.clear();
+    std::cout << "Bench: " << totalNodes << " nodes  " << (int)(elapsed.count() * 1000) << " ms  "
+              << (uint64_t)(totalNodes / std::max(elapsed.count(), 0.001)) << " nps" << std::endl;
+}
+
+// Standard perft positions with known node counts. Any FAIL means move generation
+// (or make/unmake) is broken.
+bool runPerftCheck() {
+    struct PerftCase { const char* fen; int depth; uint64_t nodes; };
+    static const PerftCase cases[] = {
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 5, 4865609ULL},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 4085603ULL},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 674624ULL},
+        {"r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1", 4, 422333ULL},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 2103487ULL},
+        {"r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10", 4, 3894594ULL},
+    };
+    GenerateMoves gen;
+    bool allOk = true;
+    for (const PerftCase& c : cases) {
+        Board board;
+        board.parseFEN(c.fen);
+        uint64_t nodes = board.Perft(c.depth, gen);
+        bool ok = nodes == c.nodes;
+        allOk = allOk && ok;
+        std::cout << (ok ? "PASS " : "FAIL ") << "d" << c.depth << " " << nodes
+                  << (ok ? "" : " expected " + std::to_string(c.nodes)) << "  " << c.fen << std::endl;
+    }
+    std::cout << (allOk ? "perft: all passed" : "perft: FAILED") << std::endl;
+    return allOk;
 }
 
 Move parseMove(Board& board, std::string moveStr, Search& search) {
@@ -105,6 +170,16 @@ int main(int argc, char* argv[]) {
             runTuner(parseTuneArgs(std::vector<std::string>(argv + argi + 1, argv + argc)));
             return 0;
         }
+        //   Botkut.exe bench [depth]     Botkut.exe perftcheck
+        if (mode == "bench") {
+            int depth = 10;
+            args >> depth;
+            runBench(search, depth);
+            return 0;
+        }
+        if (mode == "perftcheck") {
+            return runPerftCheck() ? 0 : 1;
+        }
     }
 
     // The search runs on its own thread (see Search::startAsync), so this loop keeps
@@ -117,7 +192,37 @@ int main(int argc, char* argv[]) {
         if (command == "uci") {
             uciPrint("id name Botkut");
             uciPrint("id author Aykut");
+            uciPrint("option name Hash type spin default 64 min 1 max 4096");
+            uciPrint("option name Clear Hash type button");
             uciPrint("uciok");
+        }
+        else if (command == "setoption") {
+            // setoption name <id> [value <x>]; the name may contain spaces ("Clear Hash").
+            std::string word, name, value;
+            bool inValue = false;
+            while (ss >> word) {
+                if (word == "name") { inValue = false; continue; }
+                if (word == "value") { inValue = true; continue; }
+                std::string& target = inValue ? value : name;
+                if (!target.empty()) target += " ";
+                target += word;
+            }
+            std::string key = name;   // option names are case-insensitive
+            std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+            search.stopAndWait();   // the search thread uses the table
+            if (key == "hash") {
+                int mb = 0;
+                try { mb = std::stoi(value); } catch (...) { mb = 0; }
+                if (mb >= 1 && mb <= 4096) TT.resize(mb);
+                else uciPrint("info string Hash must be between 1 and 4096 MB");
+            }
+            else if (key == "clear hash") {
+                TT.clear();
+                PTT.clear();
+            }
+            else {
+                uciPrint("info string unknown option " + name);
+            }
         }
         else if (command == "ucinewgame") {
             search.stopAndWait();   // the search thread uses both tables
@@ -193,6 +298,16 @@ int main(int argc, char* argv[]) {
             double nps = nodes / elapsed.count();
 
             std::cout << "Nodes: " << nodes << " NPS: " << (uint64_t)nps << std::endl;
+        }
+        else if (command == "bench") {
+            search.stopAndWait();
+            int depth = 10;
+            ss >> depth;
+            runBench(search, depth);
+        }
+        else if (command == "perftcheck") {
+            search.stopAndWait();
+            runPerftCheck();
         }
         else if (command == "searchdebug"){
             //search.startSearch(board, 8);

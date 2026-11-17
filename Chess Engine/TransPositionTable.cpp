@@ -2,13 +2,20 @@
 #include <algorithm>
 TranspositionTable TT(64);
 TranspositionTable PTT(16, true);
-TranspositionTable::TranspositionTable(size_t mbSize, bool isPawnTable) {
-    // Each instance only allocates the table it is actually used for.
-    if (isPawnTable) {
-        numEntries = (mbSize * 1024 * 1024) / sizeof(PawnEntry);
+TranspositionTable::TranspositionTable(size_t mbSize, bool isPawnTable) : isPawn(isPawnTable) {
+    resize(mbSize);
+}
+
+void TranspositionTable::resize(size_t mbSize) {
+    // Each instance only allocates the table it is actually used for. Swapping with
+    // an empty vector really frees the old memory before the new block is allocated.
+    if (isPawn) {
+        numEntries = std::max<size_t>(1, (mbSize * 1024 * 1024) / sizeof(PawnEntry));
+        std::vector<PawnEntry>().swap(pawnTable);
         pawnTable.resize(numEntries);
     } else {
-        numEntries = (mbSize * 1024 * 1024) / sizeof(TTEntry);
+        numEntries = std::max<size_t>(1, (mbSize * 1024 * 1024) / sizeof(TTEntry));
+        std::vector<TTEntry>().swap(table);
         table.resize(numEntries);
     }
     clear();

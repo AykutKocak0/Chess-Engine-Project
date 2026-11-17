@@ -17,7 +17,6 @@ void Board::clear() {
     sideToMove = WHITE;
     enPassantSq = -1;
     castlingRights = 0b1111;
-    castleHappened = 0b0000;
     gameState.capturedPiece = -1;
     gameState.enPassantSq = -1;
     gameState.castlingRights = 0b1111;
@@ -28,7 +27,6 @@ void Board::clear() {
 }
 
 Board::Board(){
-    castleHappened = 0b0000;
     clear();
     setupBoardArray();
     Constants::initWhole();
@@ -86,7 +84,6 @@ void Board::setupStartingBoard(){
     historyCount = 0;
     historyStack[historyCount++] = zobristKey;
     movesWithoutHalf = 0;
-    castleHappened = 0b0000;
 }
 
 uint64_t Board::getOccupancy(Color color) const {
@@ -363,7 +360,6 @@ bool Board::makeMove(Move move) {
     }
     if (flag == MoveFlag::KING_CASTLE) {
         if (us == WHITE) {
-            castleHappened |= 0b1000;
             popBit(piecesBB[W_ROOK], h1);
             setBit(piecesBB[W_ROOK], f1);
             boardArray[h1] = -1;
@@ -371,7 +367,6 @@ bool Board::makeMove(Move move) {
             zobristKey ^= zobristPieces[W_ROOK][h1];
             zobristKey ^= zobristPieces[W_ROOK][f1];
         } else {
-            castleHappened |= 0b0010;
             popBit(piecesBB[B_ROOK], h8);
             setBit(piecesBB[B_ROOK], f8);
             boardArray[h8] = -1;
@@ -382,7 +377,6 @@ bool Board::makeMove(Move move) {
     } 
     else if (flag == MoveFlag::QUEEN_CASTLE) {
         if (us == WHITE) {
-            castleHappened |= 0b0100;
             popBit(piecesBB[W_ROOK], a1);
             setBit(piecesBB[W_ROOK], d1);
             boardArray[a1] = -1;
@@ -391,7 +385,6 @@ bool Board::makeMove(Move move) {
             zobristKey ^= zobristPieces[W_ROOK][a1];
 
         } else {
-            castleHappened |= 0b0001;
             popBit(piecesBB[B_ROOK], a8);
             setBit(piecesBB[B_ROOK], d8);
             boardArray[a8] = -1;
@@ -468,7 +461,6 @@ void Board::unmakeMove(Move move){
         }
     }
     else if (move.isCastle()) {
-        castleHappened = 0b000;
         popBit(piecesBB[movedPiece], toSq);
         setBit(piecesBB[movedPiece], fromSq);
         boardArray[toSq] = -1;
@@ -655,15 +647,6 @@ void Board::initZobristKey(){
     if (sideToMove == BLACK) zobristKey ^= zobristSide;
     zobristKey ^= zobristCastling[castlingRights];
     if (enPassantSq != -1) zobristKey ^= zobristEnPassant[enPassantSq % 8];
-}
-
-uint64_t Board::calculateZobristFromScratch() {
-    uint64_t newKey = 1;
-    for (int i = 0; i < 64; i++) {
-        int piece = boardArray[i];
-        if (piece == W_PAWN || piece == B_PAWN ) newKey ^= zobristPieces[piece][i];
-    }
-    return newKey;
 }
 
 // True if the current position already occurred since the last irreversible move.

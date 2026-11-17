@@ -13,8 +13,8 @@ Botkut, C++17 ile yazılmış, UCI protokolünü konuşan bir satranç motorudur
 **Arama**
 - Iterative deepening ve aspiration window
 - Principal Variation Search (PVS)
-- Transposition table (64 MB)
-- Null move pruning, Late Move Reductions (LMR), razoring, Internal Iterative Reduction
+- Transposition table (varsayılan 64 MB, `setoption name Hash` ile değiştirilebilir)
+- Null move pruning, reverse futility pruning, Late Move Pruning (LMP), Late Move Reductions (LMR), razoring, Internal Iterative Reduction
 - Şah çekmede derinlik uzatma (check extension)
 - Hamle sıralaması: hash hamlesi, SEE ile yakalamalar, killer hamleler, countermove, history ve continuation history
 - Quiescence search (yakalamalar ve sessiz şahlar, SEE ile budama)
@@ -101,6 +101,8 @@ Desteklenen komutlar:
 | Komut | Açıklama |
 |---|---|
 | `uci`, `isready`, `ucinewgame`, `quit` | Standart UCI komutları |
+| `setoption name Hash value N` | Hash tablosu boyutunu N MB yapar (1-4096, varsayılan 64) |
+| `setoption name Clear Hash` | Hash tablolarını temizler |
 | `position startpos [moves ...]` | Başlangıç pozisyonunu kurar |
 | `position fen <FEN> [moves ...]` | FEN'den pozisyon kurar |
 | `go depth N` | Belirtilen derinliğe kadar arar |
@@ -110,6 +112,8 @@ Desteklenen komutlar:
 | `go infinite` | `stop` gelene kadar arar |
 | `stop` | Aramayı durdurur, motor `bestmove` ile cevap verir |
 | `perft N` | N derinliğinde perft çalıştırır, düğüm sayısını ve hızı yazar |
+| `perftcheck` | 6 standart pozisyonda perft çalıştırır, bilinen sonuçlarla karşılaştırır |
+| `bench [derinlik]` | 10 sabit pozisyonu sabit derinlikte (varsayılan 10) arar, toplam düğüm sayısını yazar |
 | `eval` | Mevcut pozisyonun statik değerlendirmesini iki taraf için yazar |
 | `checklegal <hamle>` | Hamlenin legal olup olmadığını yazar (görselleştirici kullanır) |
 | `fen` | Mevcut pozisyonun FEN'ini yazar |
@@ -168,16 +172,23 @@ go depth 10
 
 ## Bilinen Sınırlamalar
 
-- `setoption` (örneğin Hash boyutu) ve ponder desteklenmiyor.
+- `setoption` yalnızca `Hash` ve `Clear Hash` seçeneklerini tanır; `Threads` ve ponder desteklenmiyor.
 - PV, transposition table'dan sonuç alınan düğümlerde kısa kalabilir.
 
 ## Doğrulama
 
-Hamle üretimini perft ile kontrol edebilirsiniz:
+Hamle üretimini 6 standart perft pozisyonuyla kontrol etmek için:
 
-```
-position startpos
-perft 5
+```bash
+Botkut.exe perftcheck
 ```
 
-Beklenen sonuç `Nodes: 4865609` olmalıdır.
+Her satır `PASS` olmalı ve son satır `perft: all passed` demeli. Bir hata varsa program 1 koduyla çıkar.
+
+Arama ya da değerlendirme değişikliklerinden sonra:
+
+```bash
+Botkut.exe bench
+```
+
+Bench her pozisyonu temiz tablolarla tek thread'de aradığı için toplam düğüm sayısı her çalıştırmada ve her makinede aynıdır. Bu sayı yalnızca arama ya da değerlendirme davranışı değiştiğinde değişir. Sadece kodu düzenleyen (refactor) bir değişiklikten sonra farklı çıkıyorsa, davranış istemeden değişmiş demektir.

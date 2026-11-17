@@ -51,6 +51,7 @@ public:
     bool isInfinite() const { return infinite; }
 
     Move getBestMove() const { return bestMoveFound; }
+    uint64_t getNodes() const { return nodes; }
     std::string moveToString(Move move);
 
 private:
@@ -101,6 +102,16 @@ private:
     // +/-MATE_BOUND is a mate score (static evals never get near it).
     static constexpr int MATE_SCORE = 90000;
     static constexpr int MATE_BOUND = 80000;
+
+    // Reverse futility pruning: return the static eval at shallow non-PV nodes
+    // when it beats beta by RFP_MARGIN per remaining ply.
+    static constexpr int RFP_MAX_DEPTH = 7;
+    static constexpr int RFP_MARGIN = 80;
+
+    // Late move pruning: at non-PV nodes with depth <= LMP_MAX_DEPTH, search at most
+    // LMP_BASE + depth^2 legal quiet moves and skip the rest.
+    static constexpr int LMP_MAX_DEPTH = 4;
+    static constexpr int LMP_BASE = 3;
     // UCI score string: "cp N", or "mate N" in moves (negative = getting mated).
     static std::string scoreToUci(int score);
 
