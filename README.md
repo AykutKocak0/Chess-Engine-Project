@@ -24,10 +24,13 @@ Botkut, C++17 ile yazılmış, UCI protokolünü konuşan bir satranç motorudur
 **Değerlendirme**
 - Oyun evresine göre geçişli (tapered) değerlendirme
 - Taş-kare tabloları (PST)
-- Piyon yapısı (çift, izole, geçer piyon) ve piyon hash tablosu
-- Taş hareketliliği (mobility), şah güvenliği, fil çifti
+- Piyon yapısı (çift, izole, geri kalmış, bağlı, geçer piyon) ve piyon hash tablosu
+- Geçer piyonlarda şah uzaklığı, bloke/serbest yol ve "karenin kuralı" ile durdurulamayan piyon
+- Materyal dengesizliği (piyon sayısına göre at/kale, iki hafif taş - kale), fil çifti
+- Taş hareketliliği (mobility), ileri karakol (outpost), kalenin açık/yarı açık hatta ve 7. sırada olması
+- Şah güvenliği: saldıran taş sayısı, güvenli şah tehditleri, piyon kalkanı ve piyon fırtınası
 - Tehditler, açmazdaki taşlar, sıkışmış taş kalıpları
-- Oyun sonunda mop-up değerlendirmesi ve bilinen berabere materyal tespiti
+- Oyun sonu ölçekleme (zıt renkli filler, piyonsuz küçük üstünlük), mop-up değerlendirmesi ve bilinen berabere materyal tespiti
 
 ## Klasör Yapısı
 
@@ -142,7 +145,7 @@ Datagen'in ürettiği dosyalarla `EvalParams` içindeki ağırlıklar ayarlanabi
 Botkut.exe tune threads=8 data_1.epd data_2.epd data_3.epd
 ```
 
-Seçenekler: `threads=N`, `max=N` (rastgele N pozisyon kullan), `iters=N`, `lambda=X` (1 = yalnızca oyun sonucu, 0 = yalnızca datagen arama skoru), `valid=X` (doğrulama payı, varsayılan 0.1), `patience=N` (varsayılan 3), `out=İSİM`. Materyal değerleri sabit tutulur; ayarı PST'ler taşır.
+Seçenekler: `threads=N`, `max=N` (rastgele N pozisyon kullan), `iters=N`, `lambda=X` (1 = yalnızca oyun sonucu, 0 = yalnızca datagen arama skoru), `valid=X` (doğrulama payı, varsayılan 0.1), `patience=N` (varsayılan 3), `out=İSİM`. Piyonun materyal değeri sabit tutulur (diğer değerler ona göre ölçeklenir); şah güvenliği tablosunun nadiren ulaşılan üst kısmı (55 ve sonrası) da ayarlanmaz.
 
 Her dosyanın son %10'u (yani bütün oyunlar) tuning'e katılmaz, yalnızca doğrulama hatasını ölçmek için kullanılır. Eğitim hatası düşerken doğrulama hatası düşmüyorsa ağırlıklar veriyi ezberlemeye başlamıştır; doğrulama hatası `patience` iterasyon boyunca yeni bir en iyi değere ulaşmazsa tuning durur.
 

@@ -272,16 +272,25 @@ void runTuner(const TuneConfig& config) {
     // Weights that never change the error (for example pawn squares on the first
     // and last rank) are skipped; they are rechecked every few iterations.
     std::vector<bool> dead(PARAM_COUNT, false);
-    // Material is not tuned: adding c to a piece's material value and -c to every
-    // square of its PST gives the same evaluation, so the two would drift together
-    // without limit. The PSTs can still shift the effective piece values.
+    // Only the pawn value is fixed, as the unit the other weights are measured in.
+    // A piece's material value and its PST overlap (adding c to one and -c to every
+    // square of the other gives the same evaluation), but tuning both is still
+    // useful: one material step moves a piece's value as much as 64 PST steps.
+    // The king danger entries from KING_SAFETY_FROZEN_FROM on are reached so rarely
+    // that tuning only fits noise: it walked them from 500 to over 2000 one step at
+    // a time, which also made each iteration take hours. They stay as they are.
+    const int KING_SAFETY_FROZEN_FROM = 55;
     std::vector<bool> frozen(PARAM_COUNT, false);
     int tunable = 0;
     for (int i = 0; i < PARAM_COUNT; i++) {
-        frozen[i] = paramName(i).rfind("material[", 0) == 0;
+        std::string name = paramName(i);
+        frozen[i] = name.rfind("material[0]", 0) == 0;
+        if (name.rfind("kingSafetyTable[", 0) == 0 && std::stoi(name.substr(16)) >= KING_SAFETY_FROZEN_FROM)
+            frozen[i] = true;
         if (!frozen[i]) tunable++;
     }
-    std::cout << tunable << " of " << PARAM_COUNT << " weights are tuned (material is fixed)" << std::endl;
+    std::cout << tunable << " of " << PARAM_COUNT << " weights are tuned (pawn material and rare "
+              << "kingSafetyTable entries are fixed)" << std::endl;
     save(config.out + "_best");   // the starting weights are the best known so far
     int itersWithoutBest = 0;
 

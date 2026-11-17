@@ -5,6 +5,7 @@
 #include "EngineEval.h"
 #include "Constants.h"
 #include <iostream>
+#include <algorithm>
 #include "GenerateMoves.h"
 #include "TransPositionTable.h"
 #include "EvalParams.h"
@@ -76,8 +77,9 @@ int EngineEval::evaluate(const Board& board){
     int whiteMgMobility = 0, whiteEgMobility = 0, dangerToBlack = 0;
     int blackMgMobility = 0, blackEgMobility = 0, dangerToWhite = 0;
 
-    uint64_t whiteMinorAttacks = evaluatePieceActivity(board, WHITE, blackPawnAttacks, blackKingZone, whiteMgMobility, whiteEgMobility, dangerToBlack);
-    uint64_t blackMinorAttacks = evaluatePieceActivity(board, BLACK, whitePawnAttacks, whiteKingZone, blackMgMobility, blackEgMobility, dangerToWhite);
+    AttackInfo whiteInfo, blackInfo;
+    uint64_t whiteMinorAttacks = evaluatePieceActivity(board, WHITE, blackPawnAttacks, blackKingZone, whiteMgMobility, whiteEgMobility, dangerToBlack, whiteInfo);
+    uint64_t blackMinorAttacks = evaluatePieceActivity(board, BLACK, whitePawnAttacks, whiteKingZone, blackMgMobility, blackEgMobility, dangerToWhite, blackInfo);
 
     int whiteMobility = (((256 - phase) * whiteMgMobility) + (whiteEgMobility * phase)) / 256;
     int blackMobility = (((256 - phase) * blackMgMobility) + (blackEgMobility * phase)) / 256;
@@ -85,11 +87,32 @@ int EngineEval::evaluate(const Board& board){
 
     score+= checkPinnedPieces(board,phase);
 
+    // Everything each side attacks, pawns and king included.
+    uint64_t whiteAttacks = whiteInfo.all | whitePawnAttacks | kingAttacks(board.getKingSquare(WHITE));
+    uint64_t blackAttacks = blackInfo.all | blackPawnAttacks | kingAttacks(board.getKingSquare(BLACK));
+
+    // King zone danger counts for less with few attackers or without a queen;
+    // safe checks are added on top.
+    dangerToBlack = dangerToBlack * P.kingAttackerScale[std::min(whiteInfo.kingZoneAttackers, 4)] / 100;
+    dangerToWhite = dangerToWhite * P.kingAttackerScale[std::min(blackInfo.kingZoneAttackers, 4)] / 100;
+    if (!board.getPieceBB(W_QUEEN)) dangerToBlack = dangerToBlack * P.kingDangerNoQueen / 100;
+    if (!board.getPieceBB(B_QUEEN)) dangerToWhite = dangerToWhite * P.kingDangerNoQueen / 100;
+    dangerToBlack += safeCheckDanger(board, BLACK, whiteInfo, blackAttacks);
+    dangerToWhite += safeCheckDanger(board, WHITE, blackInfo, whiteAttacks);
+    dangerToBlack = std::max(dangerToBlack, 0);
+    dangerToWhite = std::max(dangerToWhite, 0);
+
     score+= kingSafetyEval(phase, dangerToBlack, dangerToWhite);
+
+    score+= passedPawnDynamic(board, phase, whiteAttacks, blackAttacks);
 
     // score+=underDevelopmentPenalty(board,phase);
 
     score+=threatEval(board,phase,whitePawnAttacks,blackPawnAttacks,whiteMinorAttacks,blackMinorAttacks);
+
+    score+=outpostEval(board,phase,whitePawnAttacks,blackPawnAttacks);
+
+    score = scaleEndgame(board, phase, score);
 
     return (board.sideToMove == WHITE) ? score : -score;
 }
@@ -140,8 +163,23 @@ int EngineEval::evaluateMaterial(const Board& board, int phase) {
     egScore += (wP - bP) * P.material[0].eg;
     egScore += (wN - bN) * P.material[1].eg;
     egScore += (wB - bB) * P.material[2].eg;
-    egScore += (wR - bR) * P.material[3].eg; 
+    egScore += (wR - bR) * P.material[3].eg;
     egScore += (wQ - bQ) * P.material[4].eg;
+
+    // Imbalance: piece values that depend on the rest of the material.
+    int knightPawns = wN * (wP - 5) - bN * (bP - 5);
+    int rookPawns   = wR * (wP - 5) - bR * (bP - 5);
+    mgScore += knightPawns * P.knightPawnAdjust.mg + rookPawns * P.rookPawnAdjust.mg;
+    egScore += knightPawns * P.knightPawnAdjust.eg + rookPawns * P.rookPawnAdjust.eg;
+
+    int minorDiff = (wN + wB) - (bN + bB);
+    int rookDiff  = wR - bR;
+    int minorsForRook = 0;   // > 0: White has the minors, Black the rook
+    if (minorDiff > 0 && rookDiff < 0) minorsForRook = std::min(minorDiff, -rookDiff);
+    else if (minorDiff < 0 && rookDiff > 0) minorsForRook = -std::min(-minorDiff, rookDiff);
+    mgScore += minorsForRook * P.minorsForRook.mg;
+    egScore += minorsForRook * P.minorsForRook.eg;
+
     return (((256-phase)*mgScore) + (egScore*phase)) / 256;
 }
 
@@ -227,10 +265,27 @@ int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t wh
         while (tempW) {
             int whiteSq = getLS1B(tempW);
             int rank = whiteSq / 8;
+            uint64_t bit = 1ULL << whiteSq;
 
             if (wIsolated) {
                 mgScore += P.isolatedPawn.mg;
                 egScore += P.isolatedPawn.eg;
+            }
+
+            uint64_t neighbours = ((bit & ~FILE_A) >> 1) | ((bit & ~FILE_H) << 1);
+            if ((whitePawnAttacks & bit) || (whitePawns & neighbours)) {
+                mgScore += P.connectedPawnMg[rank];
+                egScore += P.connectedPawnEg[rank];
+            }
+            // Backward: no own pawn on an adjacent file at this rank or behind it.
+            else if (!wIsolated && rank < 7 && !(whitePawns & adj & PassedPawnMasks[BLACK][whiteSq + 8])
+                     && (blackPawnAttacks & (bit << 8))) {
+                mgScore += P.backwardPawn.mg;
+                egScore += P.backwardPawn.eg;
+                if (!(blackPawns & FileMasks[i])) {
+                    mgScore += P.backwardOpenFile.mg;
+                    egScore += P.backwardOpenFile.eg;
+                }
             }
 
             if (!(blackPawns & PassedPawnMasks[WHITE][whiteSq])) {
@@ -258,11 +313,27 @@ int EngineEval::evaluatePawnStructure(const Board& board, int phase, uint64_t wh
         while (tempB) {
             int blackSq = getLS1B(tempB);
             int rank = blackSq / 8;
+            uint64_t bit = 1ULL << blackSq;
 
             // İzole Piyon Cezası
             if (bIsolated) {
                 mgScore -= P.isolatedPawn.mg;
                 egScore -= P.isolatedPawn.eg;
+            }
+
+            uint64_t neighbours = ((bit & ~FILE_A) >> 1) | ((bit & ~FILE_H) << 1);
+            if ((blackPawnAttacks & bit) || (blackPawns & neighbours)) {
+                mgScore -= P.connectedPawnMg[7 - rank];
+                egScore -= P.connectedPawnEg[7 - rank];
+            }
+            else if (!bIsolated && rank > 0 && !(blackPawns & adj & PassedPawnMasks[WHITE][blackSq - 8])
+                     && (whitePawnAttacks & (bit >> 8))) {
+                mgScore -= P.backwardPawn.mg;
+                egScore -= P.backwardPawn.eg;
+                if (!(whitePawns & FileMasks[i])) {
+                    mgScore -= P.backwardOpenFile.mg;
+                    egScore -= P.backwardOpenFile.eg;
+                }
             }
 
             if (!(whitePawns & PassedPawnMasks[BLACK][blackSq])) {
@@ -460,21 +531,37 @@ int EngineEval::kingPawnStructure(const Board& board, Color color, int phase) {
                 else mgScore += P.shieldPawnMissing;
             }
         }
+
+        // Pawn storm: on the king's file and its neighbours, the enemy pawn that
+        // has come closest to our side of the board.
+        for (int f = std::max(0, kingFile - 1); f <= std::min(7, kingFile + 1); f++) {
+            uint64_t stormers = enemyPawns & FileMasks[f];
+            if (!stormers) continue;
+            int sq = (color == WHITE) ? getLS1B(stormers) : 63 - __builtin_clzll(stormers);
+            int rank = (color == WHITE) ? sq / 8 : 7 - sq / 8;   // seen from the defender
+            int inFront = (color == WHITE) ? sq - 8 : sq + 8;
+            if (myPawns & (1ULL << inFront)) mgScore += P.pawnStormBlocked[rank];
+            else mgScore += P.pawnStorm[rank];
+        }
     }
 
     return (mgScore * (256 - phase)) / 256;
 }
 
-uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint64_t enemyPawnAttacks, uint64_t enemyKingZone, int& mgMobility, int& egMobility, int& kingDanger) {
+uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint64_t enemyPawnAttacks, uint64_t enemyKingZone, int& mgMobility, int& egMobility, int& kingDanger, AttackInfo& info) {
     uint64_t friends = board.getOccupancy(color);
     uint64_t occupancy = board.getOccupancy(BOTH);
     uint64_t minorAttacks = 0;
+    uint64_t ownPawns   = board.getPieceBB(color == WHITE ? W_PAWN : B_PAWN);
+    uint64_t enemyPawns = board.getPieceBB(color == WHITE ? B_PAWN : W_PAWN);
 
     uint64_t knightBB = board.getPieceBB(color == WHITE ? W_KNIGHT : B_KNIGHT);
     while (knightBB) {
         int sq = getLS1B(knightBB);
         uint64_t attacks = GenerateMoves::getKnightMoves(sq);
         minorAttacks |= attacks;
+        info.knights |= attacks;
+        if (attacks & enemyKingZone) info.kingZoneAttackers++;
 
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
@@ -486,15 +573,32 @@ uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint
         popBit(knightBB, sq);
     }
 
+    // 7th rank from this side's point of view, and the enemy king's back rank.
+    int seventh = (color == WHITE) ? 6 : 1;
+    int enemyBackRank = (color == WHITE) ? 7 : 0;
+    int enemyKingRank = board.getKingSquare(color == WHITE ? BLACK : WHITE) / 8;
+
     uint64_t rookBB = board.getPieceBB(color == WHITE ? W_ROOK : B_ROOK);
     while (rookBB) {
         int sq = getLS1B(rookBB);
         uint64_t attacks = GenerateMoves::getRookMagicBB(sq, occupancy);
+        info.rooks |= attacks;
+        if (attacks & enemyKingZone) info.kingZoneAttackers++;
 
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
         mgMobility += P.rookMobilityMg[count];
         egMobility += P.rookMobilityEg[count];
+
+        uint64_t file = FileMasks[sq % 8];
+        if (!(ownPawns & file)) {
+            if (!(enemyPawns & file)) { mgMobility += P.rookOpenFile.mg;     egMobility += P.rookOpenFile.eg; }
+            else                      { mgMobility += P.rookSemiOpenFile.mg; egMobility += P.rookSemiOpenFile.eg; }
+        }
+        if (sq / 8 == seventh && ((enemyPawns & (0xFFULL << (8 * seventh))) || enemyKingRank == enemyBackRank)) {
+            mgMobility += P.rookOn7th.mg;
+            egMobility += P.rookOn7th.eg;
+        }
 
         kingDanger += P.kingAttackRook * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
 
@@ -506,6 +610,8 @@ uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint
         int sq = getLS1B(bishopBB);
         uint64_t attacks = GenerateMoves::getBishopMagicBB(sq, occupancy);
         minorAttacks |= attacks;
+        info.bishops |= attacks;
+        if (attacks & enemyKingZone) info.kingZoneAttackers++;
 
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
@@ -523,13 +629,14 @@ uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint
 
         uint64_t attacks = GenerateMoves::getRookMagicBB(sq, occupancy) |
                             GenerateMoves::getBishopMagicBB(sq, occupancy);
+        info.queens |= attacks;
+        if (attacks & enemyKingZone) info.kingZoneAttackers++;
 
         uint64_t freeMoves = attacks & ~friends & ~enemyPawnAttacks;
         int count = (int) __builtin_popcountll(freeMoves);
 
         if ((color == WHITE && sq > 7) || (color==BLACK && sq<56)) {
-            if (count == 0)      { mgMobility += P.queenNoMoves.mg;  egMobility += P.queenNoMoves.eg; }
-            else if (count <= 2) { mgMobility += P.queenFewMoves.mg; egMobility += P.queenFewMoves.eg; }
+            if (count <= 2) { mgMobility += P.queenFewMoves.mg; egMobility += P.queenFewMoves.eg; }
         }
 
         kingDanger += P.kingAttackQueen * (int) __builtin_popcountll((attacks & ~friends) & enemyKingZone);
@@ -537,7 +644,123 @@ uint64_t EngineEval::evaluatePieceActivity(const Board& board, Color color, uint
         popBit(queenBB, sq);
     }
 
+    info.all = info.knights | info.bishops | info.rooks | info.queens;
     return minorAttacks;
+}
+
+uint64_t EngineEval::kingAttacks(int sq) {
+    uint64_t b = 1ULL << sq;
+    uint64_t sides = ((b & ~FILE_A) >> 1) | ((b & ~FILE_H) << 1);
+    uint64_t row = b | sides;
+    return sides | (row << 8) | (row >> 8);
+}
+
+// Danger (in kingSafetyTable units) from squares where the attacker's pieces
+// could give check without being taken: not attacked by the defender (pieces,
+// pawns or king) and not occupied by the attacker's own pieces.
+int EngineEval::safeCheckDanger(const Board& board, Color defender, const AttackInfo& attacker, uint64_t defenderAttacks) {
+    int kingSq = board.getKingSquare(defender);
+    uint64_t occupancy = board.getOccupancy(BOTH);
+    uint64_t safe = ~defenderAttacks & ~board.getOccupancy(defender == WHITE ? BLACK : WHITE);
+    uint64_t diagonal = GenerateMoves::getBishopMagicBB(kingSq, occupancy);
+    uint64_t straight = GenerateMoves::getRookMagicBB(kingSq, occupancy);
+
+    int danger = 0;
+    danger += P.safeCheckKnight * (int) __builtin_popcountll(GenerateMoves::getKnightMoves(kingSq) & attacker.knights & safe);
+    danger += P.safeCheckBishop * (int) __builtin_popcountll(diagonal & attacker.bishops & safe);
+    danger += P.safeCheckRook   * (int) __builtin_popcountll(straight & attacker.rooks & safe);
+    danger += P.safeCheckQueen  * (int) __builtin_popcountll((diagonal | straight) & attacker.queens & safe);
+    return danger;
+}
+
+// Passed pawn terms that depend on the kings and pieces, so they cannot live in
+// the pawn hash: king distances, blocked or free way to promotion, and pawn
+// endgames the defending king can no longer save. Endgame only; White minus Black.
+int EngineEval::passedPawnDynamic(const Board& board, int phase, uint64_t whiteAttacks, uint64_t blackAttacks) {
+    uint64_t whitePawns = board.getPieceBB(W_PAWN);
+    uint64_t blackPawns = board.getPieceBB(B_PAWN);
+    uint64_t occupancy = board.getOccupancy(BOTH);
+    int wk = board.getKingSquare(WHITE);
+    int bk = board.getKingSquare(BLACK);
+    auto dist = [](int a, int b) { return std::max(std::abs(a % 8 - b % 8), std::abs(a / 8 - b / 8)); };
+    auto hasPieces = [&](Color c) {
+        return (board.getPieceBB(c == WHITE ? W_KNIGHT : B_KNIGHT) | board.getPieceBB(c == WHITE ? W_BISHOP : B_BISHOP) |
+                board.getPieceBB(c == WHITE ? W_ROOK : B_ROOK) | board.getPieceBB(c == WHITE ? W_QUEEN : B_QUEEN)) != 0;
+    };
+    bool whiteHasPieces = hasPieces(WHITE);
+    bool blackHasPieces = hasPieces(BLACK);
+    int egScore = 0;
+
+    uint64_t pawns = whitePawns;
+    while (pawns) {
+        int sq = getLS1B(pawns);
+        popBit(pawns, sq);
+        if (blackPawns & PassedPawnMasks[WHITE][sq]) continue;
+        int r = sq / 8;              // relative rank
+        int stop = sq + 8;
+        uint64_t path = PassedPawnMasks[WHITE][sq] & FileMasks[sq % 8];
+        egScore += P.passedOwnKingDist[r] * dist(wk, stop) + P.passedEnemyKingDist[r] * dist(bk, stop);
+        if (occupancy & (1ULL << stop)) egScore += P.passedBlocked[r];
+        else if (!(path & (occupancy | blackAttacks))) egScore += P.passedFreePath[r];
+        if (!blackHasPieces && !(path & occupancy)) {
+            int promo = 56 + sq % 8;
+            int pawnDist = (r == 1) ? 5 : 7 - r;
+            int kingDist = dist(bk, promo) - (board.sideToMove == BLACK ? 1 : 0);
+            if (kingDist > pawnDist) egScore += P.unstoppablePasser;
+        }
+    }
+
+    pawns = blackPawns;
+    while (pawns) {
+        int sq = getLS1B(pawns);
+        popBit(pawns, sq);
+        if (whitePawns & PassedPawnMasks[BLACK][sq]) continue;
+        int r = 7 - sq / 8;          // relative rank
+        int stop = sq - 8;
+        uint64_t path = PassedPawnMasks[BLACK][sq] & FileMasks[sq % 8];
+        egScore -= P.passedOwnKingDist[r] * dist(bk, stop) + P.passedEnemyKingDist[r] * dist(wk, stop);
+        if (occupancy & (1ULL << stop)) egScore -= P.passedBlocked[r];
+        else if (!(path & (occupancy | whiteAttacks))) egScore -= P.passedFreePath[r];
+        if (!whiteHasPieces && !(path & occupancy)) {
+            int promo = sq % 8;
+            int pawnDist = (r == 1) ? 5 : 7 - r;
+            int kingDist = dist(wk, promo) - (board.sideToMove == WHITE ? 1 : 0);
+            if (kingDist > pawnDist) egScore -= P.unstoppablePasser;
+        }
+    }
+
+    return (egScore * phase) / 256;
+}
+
+// Endgames that are much more drawish than the material suggests. The endgame
+// part of the score is scaled to scale/64; the middlegame part is left alone.
+int EngineEval::scaleEndgame(const Board& board, int phase, int score) {
+    if (score == 0) return 0;
+    int scale = 64;
+
+    uint64_t wB = board.getPieceBB(W_BISHOP), bB = board.getPieceBB(B_BISHOP);
+    bool otherPieces = (board.getPieceBB(W_KNIGHT) | board.getPieceBB(B_KNIGHT) | board.getPieceBB(W_ROOK) |
+                        board.getPieceBB(B_ROOK) | board.getPieceBB(W_QUEEN) | board.getPieceBB(B_QUEEN)) != 0;
+    if (__builtin_popcountll(wB) == 1 && __builtin_popcountll(bB) == 1
+        && isWhiteSquare(getLS1B(wB)) != isWhiteSquare(getLS1B(bB))) {
+        scale = otherPieces ? P.scaleOppositeBishopsPieces : P.scaleOppositeBishops;
+    }
+
+    Color strong = score > 0 ? WHITE : BLACK;
+    auto pieceValue = [&](Color c) {
+        bool w = (c == WHITE);
+        return VAL_KNIGHT_MG * (int) __builtin_popcountll(board.getPieceBB(w ? W_KNIGHT : B_KNIGHT))
+             + VAL_BISHOP_MG * (int) __builtin_popcountll(board.getPieceBB(w ? W_BISHOP : B_BISHOP))
+             + VAL_ROOK_MG   * (int) __builtin_popcountll(board.getPieceBB(w ? W_ROOK : B_ROOK))
+             + VAL_QUEEN_MG  * (int) __builtin_popcountll(board.getPieceBB(w ? W_QUEEN : B_QUEEN));
+    };
+    if (!board.getPieceBB(strong == WHITE ? W_PAWN : B_PAWN)
+        && pieceValue(strong) - pieceValue(strong == WHITE ? BLACK : WHITE) <= VAL_BISHOP_MG) {
+        scale = std::min(scale, P.scaleNoPawns);
+    }
+
+    if (scale == 64) return score;
+    return (int) ((int64_t) score * (64 * (256 - phase) + scale * phase) / (64 * 256));
 }
 
 int EngineEval::checkTrappedPatterns(const Board& board, int phase, Color color) {
@@ -735,6 +958,39 @@ int EngineEval::threatEval(const Board& board, int phase, uint64_t whitePawnAtta
     int bMinorThreatsR = (int) __builtin_popcountll(blackMinorAttacks & wRooks);
     mgScore -= (bMinorThreatsQ * P.minorThreatQueen.mg) + (bMinorThreatsR * P.minorThreatRook.mg);
     egScore -= (bMinorThreatsQ * P.minorThreatQueen.eg) + (bMinorThreatsR * P.minorThreatRook.eg);
+
+    return (((256 - phase) * mgScore) + (phase * egScore)) / 256;
+}
+
+// Knights and bishops on squares the enemy pawns can never attack, defended by an
+// own pawn, on relative ranks 4-6. Returns White minus Black.
+int EngineEval::outpostEval(const Board& board, int phase, uint64_t whitePawnAttacks, uint64_t blackPawnAttacks){
+    const uint64_t whiteZone = 0x0000FFFFFF000000ULL;   // ranks 4-6
+    const uint64_t blackZone = 0x000000FFFFFF0000ULL;   // ranks 5-3
+    uint64_t whitePawns = board.getPieceBB(W_PAWN);
+    uint64_t blackPawns = board.getPieceBB(B_PAWN);
+    int mgScore = 0;
+    int egScore = 0;
+
+    // Pieces of one colour standing on a safe, pawn-defended square in its zone.
+    auto count = [](uint64_t pieces, uint64_t zone, uint64_t ownPawnAttacks, uint64_t enemyPawns, int side) {
+        int n = 0;
+        uint64_t candidates = pieces & zone & ownPawnAttacks;
+        while (candidates) {
+            int sq = getLS1B(candidates);
+            uint64_t adjacentAhead = PassedPawnMasks[side][sq] & ~FileMasks[sq % 8];
+            if (!(adjacentAhead & enemyPawns)) n++;
+            popBit(candidates, sq);
+        }
+        return n;
+    };
+
+    int knights = count(board.getPieceBB(W_KNIGHT), whiteZone, whitePawnAttacks, blackPawns, 0)
+                - count(board.getPieceBB(B_KNIGHT), blackZone, blackPawnAttacks, whitePawns, 1);
+    int bishops = count(board.getPieceBB(W_BISHOP), whiteZone, whitePawnAttacks, blackPawns, 0)
+                - count(board.getPieceBB(B_BISHOP), blackZone, blackPawnAttacks, whitePawns, 1);
+    mgScore += knights * P.knightOutpost.mg + bishops * P.bishopOutpost.mg;
+    egScore += knights * P.knightOutpost.eg + bishops * P.bishopOutpost.eg;
 
     return (((256 - phase) * mgScore) + (phase * egScore)) / 256;
 }
