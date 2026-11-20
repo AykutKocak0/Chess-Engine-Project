@@ -43,8 +43,15 @@ void TranspositionTable::store(uint64_t key, int depth, int score, HashFlag flag
     size_t index = key % numEntries;
     TTEntry* entry = &table[index];
 
-    // Entries left over from an earlier search are always replaceable.
-    if (entry->key == 0 || entry->age != generation || depth >= entry->depth) {
+    // Entries left over from an earlier search are always replaceable. A newer result
+    // for the same position replaces the entry unless it is much shallower (and not
+    // exact): it reflects the current move ordering and bounds, so a deeper but
+    // stale bound must not block it.
+    bool samePosition = entry->key == key;
+    bool replace = entry->key == 0 || entry->age != generation
+                || (samePosition ? (flag == HASH_EXACT || depth + 3 >= entry->depth)
+                                 : depth >= entry->depth);
+    if (replace) {
         entry->key = key;
         entry->score = score;
         entry->depth = depth;

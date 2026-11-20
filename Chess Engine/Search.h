@@ -112,6 +112,10 @@ private:
     // LMP_BASE + depth^2 legal quiet moves and skip the rest.
     static constexpr int LMP_MAX_DEPTH = 4;
     static constexpr int LMP_BASE = 3;
+
+    // Quiescence generates quiet checking moves only in its first QS_CHECK_PLIES
+    // plies (0 = never); check evasions are always searched.
+    static constexpr int QS_CHECK_PLIES = 2;
     // UCI score string: "cp N", or "mate N" in moves (negative = getting mated).
     static std::string scoreToUci(int score);
 

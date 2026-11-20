@@ -187,7 +187,10 @@ void Search::startSearch(Board& board, const SearchLimits& limits) {
                     if (reduction > 0) {
                         score = -alphaBeta(board, -alpha - 1, -alpha, currentDepth - 1, 1, true);
                     }
-                    if (score > alpha && score < beta) {
+                    if (score > alpha) {
+                        // Beating the aspiration window's upper bound only proves a lower
+                        // bound; open the window so this move gets an exact score and PV.
+                        if (score >= beta) beta = 1000000;
                         score = -alphaBeta(board, -beta, -alpha, currentDepth - 1, 1, true);
                     }
                 }
@@ -468,7 +471,7 @@ int Search::quiescence(Board& board, int alpha, int beta, int ply, int qsDepth) 
     } else {
         moveCount = gen.generateCaptureMoves(board, moveList, board.sideToMove);
         
-        if (qsDepth < 2) { 
+        if (qsDepth < QS_CHECK_PLIES) {
             moveCount = gen.generateQuietCheckMoves(board, moveList, board.sideToMove, moveCount);
         }
     }
